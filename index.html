@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Vault" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="application-name" content="Vault" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png" />
+  <title>Vault · CDT</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div class="app">
+
+    <!-- HOME -->
+    <section id="view-home" class="view">
+      <header class="header">
+        <div class="header-top">
+          <div class="brand">
+            <span class="brand-mark">◆</span>
+            <h1>Vault</h1>
+          </div>
+          <div class="header-actions">
+            <button type="button" class="btn-install hidden" id="btn-instalar" title="Instalar app">Instalar</button>
+            <button type="button" class="btn-icon" id="btn-escenarios" title="Escenarios">⇄</button>
+          </div>
+        </div>
+
+        <div class="escenario-chip" id="escenario-chip">
+          <span class="chip-label">Escenario</span>
+          <span class="chip-name" id="escenario-nombre">A</span>
+        </div>
+
+        <div class="consulta-card sim-card">
+          <div class="consulta-header">
+            <label class="pat-label">Fecha de simulación</label>
+            <input type="date" id="input-fecha-sim" />
+          </div>
+        </div>
+
+        <div class="totals">
+          <div class="total-card disponible">
+            <span class="label">Disponible</span>
+            <span class="value" id="total-disponible">$0</span>
+          </div>
+          <div class="total-card en-cdt">
+            <span class="label">En CDTs</span>
+            <span class="value" id="total-en-cdt">$0</span>
+          </div>
+          <div class="total-card yields">
+            <span class="label">Rend. neto</span>
+            <span class="value" id="total-rendimientos">$0</span>
+          </div>
+          <div class="total-card grand">
+            <span class="label">Patrimonio</span>
+            <span class="value" id="total-general">$0</span>
+          </div>
+        </div>
+        <p id="sim-warning" class="sim-warning hidden"></p>
+
+        <!-- Meta -->
+        <div class="meta-card" id="meta-card">
+          <div class="meta-head">
+            <label class="pat-label">Meta</label>
+            <button type="button" class="link-btn" id="btn-toggle-meta">Editar</button>
+          </div>
+          <div id="meta-resumen" class="meta-resumen"></div>
+          <div id="meta-form" class="meta-form hidden">
+            <div class="field-group">
+              <div class="field">
+                <label>Fecha meta</label>
+                <input type="date" id="meta-fecha" />
+              </div>
+              <div class="field">
+                <label>Monto objetivo</label>
+                <input type="number" inputmode="decimal" min="0" step="any" id="meta-monto" placeholder="Opcional" />
+              </div>
+            </div>
+            <button type="button" class="btn-primary" id="btn-guardar-meta">Guardar meta</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="main">
+        <div class="section-title">
+          <h2>1 · Aportes de capital</h2>
+          <span id="aporte-count" class="badge">0</span>
+        </div>
+        <p class="hist-hint">Paso inicial: sin aportes no hay Disponible para invertir.</p>
+        <div id="lista-aportes" class="lista-compacta"></div>
+        <button id="btn-nuevo-aporte" class="btn-add" type="button">
+          <span class="btn-plus">+</span><span>Agregar capital</span>
+        </button>
+
+        <div class="section-title" style="margin-top:28px">
+          <h2>2 · CDTs</h2>
+          <span id="cdt-count" class="badge">0</span>
+        </div>
+        <div id="lista-cdts" class="lista-compacta"></div>
+        <button id="btn-nuevo-cdt" class="btn-add btn-add-sm" type="button">
+          <span class="btn-plus">+</span><span>Nueva inversión</span>
+        </button>
+
+        <div class="home-actions" style="margin-top:24px">
+          <button type="button" class="btn-secondary" id="btn-movimientos">Ver movimientos</button>
+        </div>
+      </main>
+    </section>
+
+    <!-- ESCENARIOS -->
+    <section id="view-escenarios" class="view hidden">
+      <header class="view-nav">
+        <button type="button" class="btn-back" id="btn-volver-escenarios">←</button>
+        <h2>Escenarios</h2>
+        <span class="nav-spacer"></span>
+      </header>
+      <p class="wizard-lead">Cada escenario es una simulación independiente, con sus CDTs, aportes y movimientos.</p>
+      <div id="lista-escenarios" class="lista-compacta"></div>
+      <button type="button" class="btn-add" id="btn-crear-escenario">
+        <span class="btn-plus">+</span><span>Nuevo escenario</span>
+      </button>
+    </section>
+
+    <!-- MOVIMIENTOS -->
+    <section id="view-movimientos" class="view hidden">
+      <header class="view-nav">
+        <button type="button" class="btn-back" id="btn-volver-mov">←</button>
+        <h2>Movimientos</h2>
+        <span class="nav-spacer"></span>
+      </header>
+      <p class="wizard-lead" id="mov-escenario-label">Línea de tiempo de este escenario.</p>
+      <div id="lista-movimientos" class="mov-lista"></div>
+    </section>
+
+    <!-- NUEVO CDT -->
+    <section id="view-nuevo" class="view hidden">
+      <header class="view-nav">
+        <button type="button" class="btn-back" id="btn-cancel-nuevo">←</button>
+        <h2 id="nuevo-titulo">Nueva inversión</h2>
+        <span class="nav-spacer"></span>
+      </header>
+      <div class="wizard">
+        <div class="wizard-step" data-step="1">
+          <p class="wizard-lead">Primero elige <strong>cuándo inicia</strong>. Verás el disponible de ese día.</p>
+          <div class="field full">
+            <label>Fecha de inicio</label>
+            <input type="date" id="nuevo-fecha-inicio" />
+          </div>
+          <div class="disp-box">
+            <span class="c-label">Disponible en esa fecha</span>
+            <span class="c-value gold" id="nuevo-disponible">$0</span>
+          </div>
+          <p id="nuevo-error" class="form-error hidden"></p>
+          <button type="button" class="btn-primary" id="btn-nuevo-siguiente" disabled>Continuar</button>
+        </div>
+        <div class="wizard-step hidden" data-step="2">
+          <p class="wizard-lead">Capital máximo = disponible del día de inicio (se ajusta solo si te pasas).</p>
+          <div class="field full">
+            <label>Nombre</label>
+            <input type="text" id="nuevo-nombre" maxlength="40" />
+          </div>
+          <div class="field-group">
+            <div class="field">
+              <label>Capital</label>
+              <input type="number" inputmode="decimal" min="0" step="any" id="nuevo-capital" />
+            </div>
+            <div class="field">
+              <label>Tasa E.A. %</label>
+              <input type="number" inputmode="decimal" min="0" step="0.01" id="nuevo-tasa" value="10.5" />
+            </div>
+            <div class="field">
+              <label>Retención %</label>
+              <input type="number" inputmode="decimal" min="0" max="100" step="0.01" id="nuevo-retencion" value="4" />
+            </div>
+            <div class="field">
+              <label>Tipo</label>
+              <select id="nuevo-tipo">
+                <option value="compuesto_diario">Compuesto diario</option>
+                <option value="compuesto_mensual">Compuesto mensual</option>
+                <option value="compuesto_anual">Compuesto anual</option>
+                <option value="simple" selected>Simple (prorrateado)</option>
+                <option value="unico">Único al vencimiento</option>
+              </select>
+            </div>
+          </div>
+          <div class="field full">
+            <label>Plazo</label>
+            <div class="plazo-mode" id="nuevo-plazo-mode">
+              <button type="button" data-mode="dias" class="active">Por días</button>
+              <button type="button" data-mode="fecha">Fecha fin</button>
+            </div>
+          </div>
+          <div class="field full" id="nuevo-row-dias">
+            <label>Días</label>
+            <input type="number" inputmode="numeric" min="1" step="1" id="nuevo-dias" value="90" />
+          </div>
+          <div class="field full hidden" id="nuevo-row-fin">
+            <label>Fecha fin</label>
+            <input type="date" id="nuevo-fecha-fin" />
+          </div>
+          <div class="result-box" id="nuevo-preview" style="margin-top:14px"></div>
+          <p id="nuevo-error-2" class="form-error hidden"></p>
+          <div class="wizard-actions">
+            <button type="button" class="btn-secondary" id="btn-nuevo-atras">Atrás</button>
+            <button type="button" class="btn-primary" id="btn-nuevo-crear">Crear CDT</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DETALLE -->
+    <section id="view-detalle" class="view hidden">
+      <header class="view-nav">
+        <button type="button" class="btn-back" id="btn-volver-detalle">←</button>
+        <h2 id="detalle-titulo">Detalle</h2>
+        <button type="button" class="btn-nav-danger" id="btn-eliminar-detalle">✕</button>
+      </header>
+      <div id="detalle-body" class="detalle-body"></div>
+    </section>
+
+    <!-- APORTE -->
+    <section id="view-aporte" class="view hidden">
+      <header class="view-nav">
+        <button type="button" class="btn-back" id="btn-volver-aporte">←</button>
+        <h2 id="aporte-titulo">Aporte</h2>
+        <button type="button" class="btn-nav-danger hidden" id="btn-eliminar-aporte">✕</button>
+      </header>
+      <div class="wizard">
+        <div class="field full">
+          <label>Fecha</label>
+          <input type="date" id="aporte-fecha" />
+        </div>
+        <div class="field full">
+          <label>Monto</label>
+          <input type="number" inputmode="decimal" min="0" step="any" id="aporte-monto" />
+        </div>
+        <div class="field full">
+          <label>Nota</label>
+          <input type="text" id="aporte-nota" maxlength="40" />
+        </div>
+        <button type="button" class="btn-primary" id="btn-guardar-aporte">Guardar</button>
+      </div>
+    </section>
+
+    <footer class="footer" id="footer-home">
+      <p>Cada escenario guarda su propia simulación</p>
+    </footer>
+  </div>
+
+  <div id="modal-delete" class="modal hidden">
+    <div class="modal-content">
+      <h3>Eliminar</h3>
+      <p id="modal-delete-name"></p>
+      <div class="modal-actions">
+        <button id="btn-cancel-delete" class="btn-secondary">Cancelar</button>
+        <button id="btn-confirm-delete" class="btn-danger">Eliminar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+<script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', async () => {
+        try {
+          const reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+          // Forzar actualización del SW en cada carga
+          reg.update().catch(() => {});
+          console.log('SW ok', reg.scope);
+        } catch (err) {
+          console.warn('SW no registrado (¿HTTP en IP local?). La app funciona igual.', err);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
