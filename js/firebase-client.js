@@ -1,4 +1,4 @@
-import { initializeApp, getApps } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { initializeApp, getApps } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js';
 import {
   getAuth,
   GoogleAuthProvider,
@@ -12,18 +12,19 @@ import {
   sendEmailVerification,
   reload,
   onAuthStateChanged,
-} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+} from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js';
 import {
+  initializeFirestore,
   getFirestore,
   doc,
   getDoc,
   getDocFromServer,
   setDoc,
   deleteDoc,
-  runTransaction,
+  writeBatch,
   serverTimestamp,
   enableNetwork,
-} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js';
 
 export const OperationType = Object.freeze({
   CREATE: 'create',
@@ -80,7 +81,6 @@ async function testConnection() {
       console.error('Please check your Firebase configuration. Firestore reports the client is offline.');
       return { ok: false, reason: 'offline', code, message: msg };
     }
-    // permission-denied or not-found from server confirms active connectivity
     return { ok: true, code };
   }
 }
@@ -97,14 +97,14 @@ async function initFirebaseClient() {
 
   app = getApps().length ? getApps()[0] : initializeApp(configData);
   auth = getAuth(app);
-  db = configData.firestoreDatabaseId
-    ? getFirestore(app, configData.firestoreDatabaseId)
-    : getFirestore(app);
-
   try {
-    await enableNetwork(db);
+    db = configData.firestoreDatabaseId
+      ? initializeFirestore(app, { experimentalAutoDetectLongPolling: true }, configData.firestoreDatabaseId)
+      : initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
   } catch (_e) {
-    // ignore if already enabled
+    db = configData.firestoreDatabaseId
+      ? getFirestore(app, configData.firestoreDatabaseId)
+      : getFirestore(app);
   }
 
   const connectionPromise = testConnection();
@@ -145,7 +145,7 @@ async function initFirebaseClient() {
     getDocFromServer: (ref) => getDocFromServer(ref),
     setDoc: (ref, data, opts) => setDoc(ref, data, opts),
     deleteDoc: (ref) => deleteDoc(ref),
-    runTransaction: (fn) => runTransaction(db, fn),
+    writeBatch: () => writeBatch(db),
   };
 
   window.fbClient = client;

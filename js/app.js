@@ -28,7 +28,8 @@ let lastSyncError = '';
 let lastSyncAt = null;
 let pendingSync = false;
 let needsInitialCloudPull = false;
-let saveTimer = null;
+let syncInFlight = false;
+let syncQueued = false;
 let firebaseListo = false;
 let perfilUsuario = null; // { username, email }
 
@@ -495,20 +496,31 @@ function guardarLocal() {
   } catch (err) { console.warn(err); }
 }
 
+function dispararGuardadoNubeInmediato() {
+  if (!usuario || !fbClient || !fbDb) return;
+  if (syncInFlight) {
+    syncQueued = true;
+    return;
+  }
+  syncInFlight = true;
+  guardarNube({ silent: true })
+    .catch((e) => console.warn(e))
+    .finally(() => {
+      syncInFlight = false;
+      if (syncQueued && usuario && fbDb) {
+        syncQueued = false;
+        dispararGuardadoNubeInmediato();
+      }
+    });
+}
+
 function guardar() {
   invalidarSimCache();
   if (!usuario) return; // sin sesión no se persiste uso de la app
   guardarLocal();
   pendingSync = true;
   if (fbDb) {
-    syncStatus = 'syncing';
-    lastSyncError = '';
-    actualizarAuthChip();
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      saveTimer = null;
-      guardarNube().catch((e) => console.warn(e));
-    }, 600);
+    dispararGuardadoNubeInmediato();
   }
 }
 
@@ -852,6 +864,15 @@ function renderEscenarios() {
       renderHome();
     });
     const rename = row.querySelector('.esc-rename');
+    const nameEl = row.querySelector('.item-name');
+    rename.addEventListener('input', () => {
+      const nextName = rename.value.trim() || e.nombre;
+      if (nextName !== e.nombre) {
+        e.nombre = nextName;
+        if (nameEl) nameEl.textContent = e.nombre;
+        guardar();
+      }
+    });
     rename.addEventListener('change', () => {
       e.nombre = rename.value.trim() || e.nombre;
       guardar();
@@ -1206,8 +1227,7 @@ function renderDetalle() {
 
   body.querySelectorAll('[data-d]').forEach((input) => {
     const field = input.dataset.d;
-    const ev = input.tagName === 'SELECT' || input.type === 'date' ? 'change' : 'input';
-    input.addEventListener(ev, () => {
+    const aplicarCambioDetalle = () => {
       const estadoAntes = snapshotCDT(b, fechaSim()).estado;
       let val = input.value;
       if (['capital', 'tasa', 'dias', 'retencion'].includes(field)) val = num(val);
@@ -1219,6 +1239,7 @@ function renderDetalle() {
           input.value = val;
         }
       }
+      if (b[field] === val) return;
       b[field] = val;
       if (field === 'fechaInicio') {
         if (!b.fechaInicio) b.fechaInicio = fechaSim();
@@ -1235,7 +1256,13 @@ function renderDetalle() {
         return;
       }
       pintarResultadoDetalle(b);
-    });
+    };
+    if (input.tagName === 'SELECT') {
+      input.addEventListener('change', aplicarCambioDetalle);
+    } else {
+      input.addEventListener('input', aplicarCambioDetalle);
+      input.addEventListener('change', aplicarCambioDetalle);
+    }
   });
 }
 
@@ -1685,7 +1712,6 @@ async function usernameDisponible(username, exceptUid) {
 
   const path = 'usernames/' + key;
   try {
-    try { await fbClient.enableNetwork(); } catch (_e) { /* ignore */ }
     const ref = fbClient.docRef('usernames', key);
     let snap;
     try {
@@ -1704,9 +1730,9 @@ async function usernameDisponible(username, exceptUid) {
         return { ok: false, msg: msgFirebaseError(e1) };
       }
     }
-    if (!snap.exists()) return { ok: true, key };
+    if (!snap.exists()) return { ok: true, key, alreadyOwned: false };
     const data = snap.data() || {};
-    if (exceptUid && data.uid === exceptUid) return { ok: true, key };
+    if (exceptUid && data.uid === exceptUid) return { ok: true, key, alreadyOwned: true };
     return { ok: false, msg: tr('Ese nombre de usuario ya está en uso', 'That username is already taken') };
   } catch (err) {
     console.error('usernameDisponible', err);
@@ -1721,30 +1747,30 @@ async function reservarUsername(username, uidVal, prevUsername) {
   const prev = prevUsername ? normalizarUsername(prevUsername) : '';
   const path = 'usernames/' + key;
 
+  if (check.alreadyOwned && (!prev || prev === key)) {
+    return key;
+  }
+
   try {
-    await withTimeout(fbClient.runTransaction(async (tx) => {
+    const batch = fbClient.writeBatch();
+    if (!check.alreadyOwned) {
       const newRef = fbClient.docRef('usernames', key);
-      const snap = await tx.get(newRef);
-      if (snap.exists()) {
-        const data = snap.data() || {};
-        if (data.uid !== uidVal) {
-          throw new Error(tr('Ese nombre de usuario ya está en uso', 'That username is already taken'));
-        }
-      } else {
-        tx.set(newRef, {
-          uid: uidVal,
-          username: key,
-          createdAt: fbClient.serverTimestamp(),
-        });
-      }
-      if (prev && prev !== key) {
-        const oldRef = fbClient.docRef('usernames', prev);
-        const oldSnap = await tx.get(oldRef);
+      batch.set(newRef, {
+        uid: uidVal,
+        username: key,
+        createdAt: fbClient.serverTimestamp(),
+      });
+    }
+    if (prev && prev !== key) {
+      const oldRef = fbClient.docRef('usernames', prev);
+      try {
+        const oldSnap = await withTimeout(fbClient.getDoc(oldRef), 6000, 'Tiempo agotado al revisar usuario anterior');
         if (oldSnap.exists() && (oldSnap.data() || {}).uid === uidVal) {
-          tx.delete(oldRef);
+          batch.delete(oldRef);
         }
-      }
-    }), 12000, 'Tiempo agotado al registrar el nombre de usuario');
+      } catch (_e) { /* Si no se pudo leer el anterior, igual reservamos el nuevo */ }
+    }
+    await withTimeout(batch.commit(), 12000, 'Tiempo agotado al registrar el nombre de usuario');
     return key;
   } catch (err) {
     const { code } = extraerDetalleFirebase(err);
@@ -1831,18 +1857,16 @@ async function guardarNube(opts) {
       'Verify your email address to enable cloud saving.'
     );
     actualizarAuthChip();
-    if (vistaActual === 'cuenta') renderCuenta();
+    if (vistaActual === 'cuenta') actualizarSyncUIEnCuenta();
     return false;
   }
 
   const path = 'users/' + usuario.uid;
   try {
-    clearTimeout(saveTimer);
-    saveTimer = null;
     syncStatus = 'syncing';
     lastSyncError = '';
     actualizarAuthChip();
-    if (vistaActual === 'cuenta' && opts && opts.manual) renderCuenta();
+    if (vistaActual === 'cuenta' && opts && opts.manual) actualizarSyncUIEnCuenta();
 
     asegurarEstadoMinimo();
     const estadoLimpio = sanitizarEstadoParaNube(estado);
@@ -1868,7 +1892,7 @@ async function guardarNube(opts) {
     pendingSync = false;
     needsInitialCloudPull = false;
     actualizarAuthChip();
-    if (vistaActual === 'cuenta') renderCuenta();
+    if (vistaActual === 'cuenta') actualizarSyncUIEnCuenta();
     return true;
   } catch (err) {
     console.error('guardarNube', err);
@@ -1876,7 +1900,7 @@ async function guardarNube(opts) {
     syncStatus = 'error';
     lastSyncError = msgFirebaseError(err);
     actualizarAuthChip();
-    if (vistaActual === 'cuenta') renderCuenta();
+    if (vistaActual === 'cuenta') actualizarSyncUIEnCuenta();
     return false;
   }
 }
@@ -1884,7 +1908,6 @@ async function guardarNube(opts) {
 async function cargarDesdeNube() {
   if (!usuario || !fbClient || !fbDb) return false;
   try {
-    try { await fbClient.enableNetwork(); } catch (_e) { /* ignore */ }
     const data = await cargarPerfil(usuario.uid);
     needsInitialCloudPull = false;
 
@@ -2099,19 +2122,14 @@ function toggleEye(btn) {
   btn.setAttribute('aria-label', show ? tr('Ocultar contraseña', 'Hide password') : tr('Ver contraseña', 'Show password'));
 }
 
-function renderCuenta() {
+function actualizarSyncUIEnCuenta() {
   if (!usuario) return;
-  const name = (perfilUsuario && perfilUsuario.username) || '';
   const userEl = document.getElementById('cuenta-username');
-  const input = document.getElementById('perfil-username');
-  const email = document.getElementById('cuenta-email');
   const sync = document.getElementById('cuenta-sync-info');
   const syncErrEl = document.getElementById('cuenta-sync-error');
   const retryBtn = document.getElementById('btn-retry-sync');
-
+  const name = (perfilUsuario && perfilUsuario.username) || '';
   if (userEl) userEl.textContent = name ? '@' + name : '—';
-  if (input && document.activeElement !== input) input.value = name;
-  if (email) email.value = usuario.email || '';
 
   const syncTxt = syncStatus === 'synced' ? tr('Guardado en la nube', 'Saved in the cloud')
     : syncStatus === 'syncing' ? tr('Guardando en la nube…', 'Saving to the cloud…')
@@ -2139,11 +2157,22 @@ function renderCuenta() {
   if (retryBtn) {
     retryBtn.disabled = syncStatus === 'syncing';
   }
+  actualizarAuthChip();
+}
 
+function renderCuenta() {
+  if (!usuario) return;
+  const name = (perfilUsuario && perfilUsuario.username) || '';
+  const input = document.getElementById('perfil-username');
+  const email = document.getElementById('cuenta-email');
+
+  if (input && document.activeElement !== input) input.value = name;
+  if (email) email.value = usuario.email || '';
+
+  actualizarSyncUIEnCuenta();
   showFormError('perfil-user-error', '');
   showFormError('perfil-pass-msg', '');
   if (typeof applyI18n === 'function') applyI18n();
-  actualizarAuthChip();
 }
 
 async function doLogin() {
@@ -2235,11 +2264,10 @@ async function doLogout() {
   if (!fbClient || !fbAuth) return;
   setAuthLoading(true, typeof t === 'function' ? t('loading_logout') : 'Cerrando sesión…');
   try {
-    if (pendingSync) {
+    syncQueued = false;
+    if (pendingSync && !syncInFlight) {
       try { await guardarNube(); } catch (_e) { /* ignore */ }
     }
-    clearTimeout(saveTimer);
-    saveTimer = null;
     await fbClient.signOut();
   } catch (err) {
     setAuthLoading(false);
@@ -2288,20 +2316,21 @@ async function guardarUsernamePerfil() {
     showFormError('perfil-user-error', tr('Verifica tu correo antes de registrar tu nombre de usuario.', 'Verify your email before claiming a username.'));
     return;
   }
+  const btn = document.getElementById('btn-guardar-username');
   const prev = (perfilUsuario && perfilUsuario.username) || '';
-  const check = await usernameDisponible(document.getElementById('perfil-username').value, usuario.uid);
-  if (!check.ok) { showFormError('perfil-user-error', check.msg); return; }
-  if (prev === check.key) {
-    showFormError('perfil-user-error', tr('Ese ya es tu nombre de usuario.', 'That is already your username.'), true);
-    return;
-  }
-  setAuthLoading(true, typeof t === 'function' ? t('loading_save') : 'Guardando…');
+  if (btn) btn.disabled = true;
   try {
+    const check = await usernameDisponible(document.getElementById('perfil-username').value, usuario.uid);
+    if (!check.ok) { showFormError('perfil-user-error', check.msg); return; }
+    if (prev === check.key) {
+      showFormError('perfil-user-error', tr('Ese ya es tu nombre de usuario.', 'That is already your username.'), true);
+      return;
+    }
     await reservarUsername(check.key, usuario.uid, prev);
     clearPendingUsername(usuario.uid);
     perfilUsuario = { username: check.key, email: usuario.email || (perfilUsuario && perfilUsuario.email) || '' };
     const saved = await guardarNube({ manual: true });
-    renderCuenta();
+    actualizarSyncUIEnCuenta();
     if (saved) {
       showFormError('perfil-user-error', tr('Nombre de usuario guardado en la nube.', 'Username saved to the cloud.'), true);
     } else {
@@ -2309,8 +2338,9 @@ async function guardarUsernamePerfil() {
     }
   } catch (err) {
     showFormError('perfil-user-error', msgFirebaseError(err));
+  } finally {
+    if (btn) btn.disabled = false;
   }
-  setAuthLoading(false);
 }
 
 function escucharAuth() {
@@ -2457,13 +2487,34 @@ async function init() {
 
   document.getElementById('btn-volver-aporte').addEventListener('click', volverAtras);
   document.getElementById('btn-guardar-aporte').addEventListener('click', guardarAporte);
+  const aporteFechaInput = document.getElementById('aporte-fecha');
   const aporteMontoInput = document.getElementById('aporte-monto');
-  if (aporteMontoInput) {
-    aporteMontoInput.addEventListener('input', () => {
+  const aporteNotaInput = document.getElementById('aporte-nota');
+  const syncAporteEnVivo = () => {
+    if (aporteMontoInput) {
       const el = document.getElementById('aporte-status-monto');
       if (el) el.textContent = fmt(num(aporteMontoInput.value));
-    });
-  }
+    }
+    if (!aporteEditId) return;
+    const e = esc();
+    const a = e && (e.aportes || []).find((x) => x.id === aporteEditId);
+    if (!a) return;
+    const fecha = (aporteFechaInput && aporteFechaInput.value) || fechaSim();
+    const monto = num(aporteMontoInput ? aporteMontoInput.value : a.monto);
+    const nota = (aporteNotaInput ? aporteNotaInput.value.trim() : a.nota) || 'Aporte';
+    if (a.fecha === fecha && a.monto === monto && a.nota === nota) return;
+    a.fecha = fecha;
+    a.monto = monto;
+    a.nota = nota;
+    const tit = document.getElementById('aporte-titulo');
+    if (tit) tit.textContent = nota;
+    guardar();
+  };
+  [aporteFechaInput, aporteMontoInput, aporteNotaInput].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('input', syncAporteEnVivo);
+    el.addEventListener('change', syncAporteEnVivo);
+  });
   document.getElementById('btn-eliminar-aporte').addEventListener('click', () => {
     const a = esc().aportes.find((x) => x.id === aporteEditId);
     if (a) pedirEliminar('aporte', a.id, a.nota || 'Aporte');
@@ -2480,14 +2531,20 @@ async function init() {
     inputF.addEventListener('change', () => {
       const e = esc();
       if (!e) return;
-      e.fechaSim = inputF.value || hoyISO();
-      guardar();
+      const nextFecha = inputF.value || hoyISO();
+      if (e.fechaSim !== nextFecha) {
+        e.fechaSim = nextFecha;
+        guardar();
+      }
       renderHome();
     });
     inputF.addEventListener('input', () => {
       const e = esc();
       if (!e || !inputF.value) return;
-      e.fechaSim = inputF.value;
+      if (e.fechaSim !== inputF.value) {
+        e.fechaSim = inputF.value;
+        guardar();
+      }
       actualizarTotales();
     });
   }
@@ -2505,18 +2562,35 @@ async function init() {
     const m = (esc().metas || []).find((x) => x.id === metaEditId);
     if (m) pedirEliminar('meta', m.id, m.nombre || 'Meta');
   });
-  ['meta-fecha', 'meta-monto'].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('input', actualizarInfoMeta);
-    if (el) el.addEventListener('change', actualizarInfoMeta);
-  });
+  const metaNombreInput = document.getElementById('meta-nombre');
+  const metaFechaInput = document.getElementById('meta-fecha');
   const metaMonto = document.getElementById('meta-monto');
-  if (metaMonto) {
-    metaMonto.addEventListener('input', () => {
+  const syncMetaEnVivo = () => {
+    if (metaMonto) {
       const el = document.getElementById('meta-status-monto');
       if (el) el.textContent = fmt(num(metaMonto.value));
-    });
-  }
+    }
+    actualizarInfoMeta();
+    if (!metaEditId) return;
+    const e = esc();
+    const m = e && (e.metas || []).find((x) => x.id === metaEditId);
+    if (!m) return;
+    const nombre = (metaNombreInput ? metaNombreInput.value.trim() : m.nombre) || 'Meta';
+    const fecha = (metaFechaInput ? metaFechaInput.value : m.fecha) || '';
+    const monto = num(metaMonto ? metaMonto.value : m.monto);
+    if (m.nombre === nombre && m.fecha === fecha && m.monto === monto) return;
+    m.nombre = nombre;
+    m.fecha = fecha;
+    m.monto = monto;
+    const tit = document.getElementById('meta-titulo');
+    if (tit) tit.textContent = nombre;
+    guardar();
+  };
+  [metaNombreInput, metaFechaInput, metaMonto].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('input', syncMetaEnVivo);
+    el.addEventListener('change', syncMetaEnVivo);
+  });
 
   // Inversiones lista
   document.getElementById('btn-ir-inversiones').addEventListener('click', () => {
@@ -2536,15 +2610,24 @@ async function init() {
       document.getElementById('caja-umbral').value = cfg.umbral;
     }
   });
-  on('btn-guardar-caja', 'click', () => {
+  const syncCajaEnVivo = () => {
     const e = esc();
     if (!e) return;
-    e.caja = {
-      tasa: num(document.getElementById('caja-tasa').value, 4),
-      retencion: num(document.getElementById('caja-retencion').value, 7),
-      umbral: num(document.getElementById('caja-umbral').value, 2881),
-    };
+    const tasa = num(document.getElementById('caja-tasa').value, 4);
+    const retencion = num(document.getElementById('caja-retencion').value, 7);
+    const umbral = num(document.getElementById('caja-umbral').value, 2881);
+    const prev = cajaCfg(e);
+    if (prev.tasa === tasa && prev.retencion === retencion && prev.umbral === umbral) return;
+    e.caja = { tasa, retencion, umbral };
     guardar();
+    actualizarTotales();
+  };
+  ['caja-tasa', 'caja-retencion', 'caja-umbral'].forEach((id) => {
+    on(id, 'input', syncCajaEnVivo);
+    on(id, 'change', syncCajaEnVivo);
+  });
+  on('btn-guardar-caja', 'click', () => {
+    syncCajaEnVivo();
     document.getElementById('caja-form').classList.add('hidden');
     renderHome();
   });
