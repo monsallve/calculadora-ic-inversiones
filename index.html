@@ -23,7 +23,7 @@
   <div class="app">
 
     <!-- HOME -->
-    <section id="view-home" class="view">
+    <section id="view-home" class="view hidden">
       <header class="header">
         <div class="header-top">
           <div class="brand">
@@ -34,11 +34,11 @@
             </div>
           </div>
           <div class="header-actions">
-            <button type="button" class="btn-icon" id="btn-cuenta" title="Cuenta">👤</button>
+            <button type="button" class="btn-icon" id="btn-cuenta" title="Mi cuenta">👤</button>
             <button type="button" class="btn-icon" id="btn-escenarios" title="Escenarios">⇄</button>
           </div>
           <div class="auth-chip" id="auth-chip">
-            <span class="auth-chip-text" id="auth-chip-text">Invitado (solo este dispositivo)</span>
+            <span class="auth-chip-text" id="auth-chip-text">—</span>
           </div>
         </div>
 
@@ -191,65 +191,113 @@
     </section>
 
 
-    <!-- CUENTA / LOGIN -->
-    <section id="view-cuenta" class="view hidden">
-      <header class="view-nav">
-        <button type="button" class="btn-back" id="btn-volver-cuenta">←</button>
-        <h2>Cuenta</h2>
-        <span class="nav-spacer"></span>
-      </header>
-
-      <div id="cuenta-logueado" class="wizard hidden">
-        <div class="detalle-status">
-          <span class="pill">Sesión activa</span>
-          <span class="detalle-status-val" id="cuenta-email">—</span>
+    <!-- GATE / LOGIN (pantalla inicial obligatoria) -->
+    <section id="view-gate" class="view hidden">
+      <div class="gate-wrap">
+        <div class="gate-brand">
+          <span class="brand-mark">◆</span>
+          <h1>Monsallve</h1>
+          <span class="brand-sub">Financiero</span>
         </div>
-        <p class="wizard-lead">Tus escenarios, aportes, inversiones y metas se guardan en la nube y se recuperan en cualquier dispositivo.</p>
-        <div class="result-box" id="cuenta-sync-info"></div>
-        <button type="button" class="btn-secondary" id="btn-cerrar-sesion">Cerrar sesión</button>
-      </div>
-
-      <div id="cuenta-invitado" class="wizard">
-        <p class="wizard-lead">En modo invitado los datos solo viven en este teléfono. Crea una cuenta para no perderlos y usarlos en otro dispositivo.</p>
+        <p class="gate-lead">Inicia sesión para acceder a tu patrimonio e inversiones.</p>
 
         <div class="auth-tabs" id="auth-tabs">
           <button type="button" class="auth-tab active" data-tab="login">Entrar</button>
           <button type="button" class="auth-tab" data-tab="registro">Registrarse</button>
         </div>
 
-        <div id="auth-panel-login">
+        <div id="auth-panel-login" class="gate-panel">
           <div class="field full">
             <label>Correo</label>
-            <input type="email" id="login-email" autocomplete="email" placeholder="tu@correo.com" />
+            <input type="email" id="login-email" autocomplete="username" placeholder="tu@correo.com" />
           </div>
           <div class="field full">
             <label>Contraseña</label>
-            <input type="password" id="login-password" autocomplete="current-password" placeholder="Mínimo 6 caracteres" />
+            <div class="pass-wrap">
+              <input type="password" id="login-password" autocomplete="current-password" placeholder="Tu contraseña" />
+              <button type="button" class="btn-eye" data-target="login-password" aria-label="Ver contraseña">👁</button>
+            </div>
           </div>
           <p class="form-error hidden" id="login-error"></p>
           <button type="button" class="btn-primary" id="btn-do-login">Entrar</button>
+          <button type="button" class="btn-linkish" id="btn-forgot-password">¿Olvidaste tu contraseña?</button>
         </div>
 
-        <div id="auth-panel-registro" class="hidden">
+        <div id="auth-panel-registro" class="gate-panel hidden">
+          <div class="field full">
+            <label>Nombre de usuario</label>
+            <input type="text" id="reg-username" maxlength="24" autocomplete="username" placeholder="Ej. juanperez" />
+          </div>
           <div class="field full">
             <label>Correo</label>
             <input type="email" id="reg-email" autocomplete="email" placeholder="tu@correo.com" />
           </div>
           <div class="field full">
             <label>Contraseña</label>
-            <input type="password" id="reg-password" autocomplete="new-password" placeholder="Mínimo 6 caracteres" />
+            <div class="pass-wrap">
+              <input type="password" id="reg-password" autocomplete="new-password" placeholder="Mínimo 6 caracteres" />
+              <button type="button" class="btn-eye" data-target="reg-password" aria-label="Ver contraseña">👁</button>
+            </div>
           </div>
           <div class="field full">
             <label>Repetir contraseña</label>
-            <input type="password" id="reg-password2" autocomplete="new-password" />
+            <div class="pass-wrap">
+              <input type="password" id="reg-password2" autocomplete="new-password" placeholder="Repite la contraseña" />
+              <button type="button" class="btn-eye" data-target="reg-password2" aria-label="Ver contraseña">👁</button>
+            </div>
           </div>
           <p class="form-error hidden" id="reg-error"></p>
           <button type="button" class="btn-primary" id="btn-do-registro">Crear cuenta</button>
         </div>
 
-        <p class="pat-hint" id="firebase-config-hint" style="margin-top:16px"></p>
+        <div class="gate-divider"><span>o</span></div>
+        <button type="button" class="btn-google" id="btn-google-login">
+          <span class="g-icon">G</span> Continuar con Google
+        </button>
+        <p class="pat-hint" id="firebase-config-hint" style="margin-top:14px"></p>
       </div>
     </section>
+
+    <!-- MI CUENTA (solo con sesión) -->
+    <section id="view-cuenta" class="view hidden">
+      <header class="view-nav">
+        <button type="button" class="btn-back" id="btn-volver-cuenta">←</button>
+        <h2>Mi cuenta</h2>
+        <span class="nav-spacer"></span>
+      </header>
+      <div class="wizard">
+        <div class="detalle-status">
+          <span class="pill" id="cuenta-username-pill">Usuario</span>
+          <span class="detalle-status-val" id="cuenta-username">—</span>
+        </div>
+        <div class="result-box" id="cuenta-sync-info" style="margin-bottom:14px"></div>
+
+        <div class="field full">
+          <label>Nombre de usuario</label>
+          <input type="text" id="perfil-username" maxlength="24" />
+        </div>
+        <p class="form-error hidden" id="perfil-user-error"></p>
+        <button type="button" class="btn-primary" id="btn-guardar-username">Guardar nombre de usuario</button>
+
+        <div class="field full" style="margin-top:18px">
+          <label>Correo</label>
+          <input type="email" id="cuenta-email" disabled />
+        </div>
+        <p class="pat-hint">Para cambiar la contraseña te enviamos un enlace de confirmación al correo.</p>
+        <button type="button" class="btn-secondary" id="btn-reset-password">Enviar enlace para cambiar contraseña</button>
+        <p class="form-error hidden" id="perfil-pass-msg"></p>
+
+        <button type="button" class="btn-secondary" id="btn-cerrar-sesion" style="margin-top:20px">Cerrar sesión</button>
+      </div>
+    </section>
+
+    <!-- Overlay de carga auth -->
+    <div id="auth-loading" class="auth-loading hidden" aria-live="polite">
+      <div class="auth-loading-box">
+        <div class="spinner"></div>
+        <p id="auth-loading-text">Entrando…</p>
+      </div>
+    </div>
 
     <!-- ESCENARIOS -->
     <section id="view-escenarios" class="view hidden">
@@ -427,6 +475,18 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
   <script src="js/firebase-config.js"></script>
+  <script>
+    // Config embebida (evita caché vieja de firebase-config.js)
+    window.FIREBASE_CONFIG = {
+      apiKey: "AIzaSyAmkeBv0PVJhjKl1ixr7RQW4rp0wHFlBNc",
+      authDomain: "monsallve-financiero.firebaseapp.com",
+      projectId: "monsallve-financiero",
+      storageBucket: "monsallve-financiero.firebasestorage.app",
+      messagingSenderId: "195986811906",
+      appId: "1:195986811906:web:fcdc8073f4154356df0b1b",
+      measurementId: "G-74GZ0FJREB"
+    };
+  </script>
   <script src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

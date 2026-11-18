@@ -1354,3 +1354,119 @@ body {
   border-color: var(--gold);
   color: var(--gold);
 }
+
+/* Gate login */
+.gate-wrap {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 32px 18px 48px;
+}
+.gate-brand {
+  text-align: center;
+  margin-bottom: 8px;
+}
+.gate-brand h1 {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  margin: 4px 0 0;
+}
+.gate-lead {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin: 0 0 20px;
+}
+.gate-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+.gate-divider::before,
+.gate-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.pass-wrap {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.pass-wrap input { flex: 1; }
+.btn-eye {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 1rem;
+}
+.btn-google {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-gold);
+  background: transparent;
+  color: var(--text);
+  border-radius: var(--radius);
+  font-family: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.btn-google:active { opacity: 0.85; }
+.g-icon {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  color: #4285f4;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.btn-linkish {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  background: none;
+  border: none;
+  color: var(--gold);
+  font-size: 0.8rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.auth-loading {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.auth-loading.hidden { display: none !important; }
+.auth-loading-box {
+  text-align: center;
+  color: var(--text);
+}
+.spinner {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

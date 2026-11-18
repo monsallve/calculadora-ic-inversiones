@@ -1,22 +1,15 @@
-# Conectar Firebase — Monsallve Financiero
+# Firebase — Monsallve Financiero
 
-## 1. Edita js/firebase-config.js
+## Authorized domains
+Authentication → Settings → Authorized domains:
+- monsallve.github.io
+- localhost (para pruebas)
 
-Firebase Console → ⚙️ Project settings → Your apps → SDK setup and configuration → Config
+## Sign-in methods
+- Email/Password: ON
+- Google: ON (añade email de soporte del proyecto)
 
-Pega tus valores reales (reemplaza todo lo que diga PEGAR_...).
-
-## 2. Dominio autorizado
-
-Authentication → Settings → Authorized domains → Add domain:
-
-    monsallve.github.io
-
-## 3. Authentication
-
-Sign-in method → Email/Password → Enable
-
-## 4. Firestore rules
+## Firestore rules (publicar estas)
 
 ```
 rules_version = '2';
@@ -25,16 +18,18 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
+    match /usernames/{uname} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid;
+      allow delete: if request.auth != null
+        && resource.data.uid == request.auth.uid;
+      allow update: if false;
+    }
   }
 }
 ```
 
-## 5. Sube a GitHub
-
-Sube todos los archivos del zip a la raíz del repo calculadora-ic-inversiones.
-
-## Uso
-
-- Icono 👤 → Cuenta
-- Registrarse o Entrar
-- Los cambios se guardan en local y en la nube (users/{uid})
+## Colecciones
+- users/{uid} → username, email, estado, updatedAt
+- usernames/{username} → uid (unicidad)

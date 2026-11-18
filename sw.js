@@ -1,5 +1,5 @@
-/* Monsallve Financiero SW v3 */
-const CACHE_NAME = 'monsallve-v3';
+/* Monsallve Financiero SW v4 */
+const CACHE_NAME = 'monsallve-v5';
 
 const ASSETS = [
   './',
