@@ -1325,3 +1325,32 @@ body {
   color: var(--text-muted);
   letter-spacing: 0.03em;
 }
+
+/* Auth */
+.auth-chip {
+  margin-top: 8px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+.auth-chip-text { opacity: 0.9; }
+.auth-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.auth-tab {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.85rem;
+}
+.auth-tab.active {
+  border-color: var(--gold);
+  color: var(--gold);
+}

@@ -18,6 +18,15 @@ let aporteEditId = null;
 let metaEditId = null;
 let nuevoDraft = null;
 
+/* Firebase */
+let fbAuth = null;
+let fbDb = null;
+let usuario = null;       // firebase.User | null
+let syncStatus = 'local'; // local | syncing | synced | error
+let saveTimer = null;
+let firebaseListo = false;
+
+
 /* ---------- utils ---------- */
 const fmt = (n) => {
   if (!Number.isFinite(n)) return '$0';
@@ -402,42 +411,102 @@ function generarMovimientos() {
 }
 
 /* ---------- persistencia ---------- */
-function guardar() {
-  invalidarSimCache();
+function normalizarEstado(raw) {
+  if (!raw || !raw.escenarios?.length) return false;
+  estado = raw;
+  if (!estado.activoId) estado.activoId = estado.escenarios[0].id;
+  estado.escenarios.forEach((e) => {
+    if (!e.aportes) e.aportes = [];
+    if (!e.bolsillos) e.bolsillos = [];
+    if (!e.caja) e.caja = { tasa: 4, retencion: 7, umbral: 2881 };
+    else {
+      if (e.caja.tasa == null) e.caja.tasa = 4;
+      if (e.caja.retencion == null) e.caja.retencion = 7;
+      if (e.caja.umbral == null) e.caja.umbral = 2881;
+    }
+    if (!Array.isArray(e.metas)) {
+      e.metas = [];
+      if (e.meta && (e.meta.fecha || e.meta.monto)) {
+        e.metas.push({
+          id: uid(),
+          nombre: e.meta.nombre || 'Meta principal',
+          fecha: e.meta.fecha || '',
+          monto: num(e.meta.monto),
+        });
+      }
+      delete e.meta;
+    }
+  });
+  return true;
+}
+
+function guardarLocal() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(estado)); }
   catch (err) { console.warn(err); }
 }
+
+function guardar() {
+  invalidarSimCache();
+  guardarLocal();
+  if (usuario && fbDb) {
+    syncStatus = 'syncing';
+    actualizarAuthChip();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { guardarNube().catch((e) => console.warn(e)); }, 600);
+  }
+}
+
+async function guardarNube() {
+  if (!usuario || !fbDb) return;
+  try {
+    syncStatus = 'syncing';
+    actualizarAuthChip();
+    await fbDb.collection('users').doc(usuario.uid).set({
+      estado,
+      email: usuario.email || null,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    syncStatus = 'synced';
+    actualizarAuthChip();
+    const info = document.getElementById('cuenta-sync-info');
+    if (info && !document.getElementById('view-cuenta').classList.contains('hidden')) {
+      info.innerHTML = `<div class="result-item net"><span class="r-label">Estado</span><span class="r-value">Guardado en la nube</span></div>`;
+    }
+  } catch (err) {
+    console.error('guardarNube', err);
+    syncStatus = 'error';
+    actualizarAuthChip();
+  }
+}
+
+async function cargarDesdeNube() {
+  if (!usuario || !fbDb) return false;
+  try {
+    const snap = await fbDb.collection('users').doc(usuario.uid).get();
+    if (snap.exists) {
+      const data = snap.data();
+      if (data && data.estado && normalizarEstado(data.estado)) {
+        guardarLocal();
+        syncStatus = 'synced';
+        return true;
+      }
+    }
+    // Primera vez: subir lo local actual a la nube
+    await guardarNube();
+    return false;
+  } catch (err) {
+    console.error('cargarDesdeNube', err);
+    syncStatus = 'error';
+    return false;
+  }
+}
+
 function cargar() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      estado = JSON.parse(raw);
-      if (!estado.escenarios?.length) throw new Error('empty');
-      if (!estado.activoId) estado.activoId = estado.escenarios[0].id;
-      estado.escenarios.forEach((e) => {
-        if (!e.aportes) e.aportes = [];
-        if (!e.bolsillos) e.bolsillos = [];
-        if (!e.caja) e.caja = { tasa: 4, retencion: 7, umbral: 2881 };
-        else {
-          if (e.caja.tasa == null) e.caja.tasa = 4;
-          if (e.caja.retencion == null) e.caja.retencion = 7;
-          if (e.caja.umbral == null) e.caja.umbral = 2881;
-        }
-        // Migrar meta única → metas[]
-        if (!Array.isArray(e.metas)) {
-          e.metas = [];
-          if (e.meta && (e.meta.fecha || e.meta.monto)) {
-            e.metas.push({
-              id: uid(),
-              nombre: e.meta.nombre || 'Meta principal',
-              fecha: e.meta.fecha || '',
-              monto: num(e.meta.monto),
-            });
-          }
-          delete e.meta;
-        }
-      });
-      return;
+      const parsed = JSON.parse(raw);
+      if (normalizarEstado(parsed)) return;
     }
   } catch { /* migrate */ }
 
@@ -480,7 +549,7 @@ function cargar() {
 }
 
 /* ---------- navegación (historial Android / botón atrás) ---------- */
-const VISTAS = ['home', 'nuevo', 'detalle', 'aporte', 'aportes', 'inversiones', 'metas', 'meta', 'movimientos', 'escenarios'];
+const VISTAS = ['home', 'nuevo', 'detalle', 'aporte', 'aportes', 'inversiones', 'metas', 'meta', 'movimientos', 'escenarios', 'cuenta'];
 let vistaActual = 'home';
 let navSilent = false;
 /** Pila propia: garantiza que "atrás" vuelva a la vista anterior y no cierre la app */
@@ -505,6 +574,7 @@ function refrescarVista(nombre) {
   else if (nombre === 'aportes') renderAportesLista();
   else if (nombre === 'inversiones') renderInversionesLista();
   else if (nombre === 'metas') renderMetasLista();
+  else if (nombre === 'cuenta') renderCuenta();
   else if (nombre === 'meta') {
     if (metaEditId) abrirMeta(metaEditId, true);
   } else if (nombre === 'detalle') {
@@ -1335,6 +1405,169 @@ function eliminarConfirmado() {
 }
 
 /* ---------- init ---------- */
+
+/* ---------- Firebase Auth + Firestore ---------- */
+function firebaseConfigurado() {
+  const c = window.FIREBASE_CONFIG;
+  if (!c || !c.apiKey || c.apiKey === 'PEGAR_API_KEY' || c.apiKey.includes('PEGAR')) return false;
+  if (!c.projectId || String(c.projectId).includes('PEGAR')) return false;
+  return true;
+}
+
+function initFirebase() {
+  const hint = document.getElementById('firebase-config-hint');
+  if (typeof firebase === 'undefined') {
+    if (hint) hint.textContent = 'No se cargó el SDK de Firebase. Revisa tu conexión a internet.';
+    return false;
+  }
+  if (!firebaseConfigurado()) {
+    if (hint) {
+      hint.innerHTML = '⚠️ Falta configurar <code>js/firebase-config.js</code> con los datos de tu proyecto Firebase. Sin eso el login no funcionará.';
+    }
+    return false;
+  }
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(window.FIREBASE_CONFIG);
+    fbAuth = firebase.auth();
+    fbDb = firebase.firestore();
+    firebaseListo = true;
+    if (hint) hint.textContent = '';
+    return true;
+  } catch (err) {
+    console.error(err);
+    if (hint) hint.textContent = 'Error iniciando Firebase: ' + err.message;
+    return false;
+  }
+}
+
+function actualizarAuthChip() {
+  const chip = document.getElementById('auth-chip-text');
+  if (!chip) return;
+  if (usuario) {
+    const st = syncStatus === 'syncing' ? ' · guardando…'
+      : syncStatus === 'synced' ? ' · en la nube'
+      : syncStatus === 'error' ? ' · error al sincronizar'
+      : '';
+    chip.textContent = (usuario.email || 'Cuenta') + st;
+  } else {
+    chip.textContent = 'Invitado (solo este dispositivo)';
+  }
+}
+
+function renderCuenta() {
+  const logueado = document.getElementById('cuenta-logueado');
+  const invitado = document.getElementById('cuenta-invitado');
+  if (usuario) {
+    logueado.classList.remove('hidden');
+    invitado.classList.add('hidden');
+    document.getElementById('cuenta-email').textContent = usuario.email || usuario.uid;
+    const info = document.getElementById('cuenta-sync-info');
+    info.innerHTML = `
+      <div class="result-item"><span class="r-label">UID</span><span class="r-value" style="font-size:0.7rem">${usuario.uid}</span></div>
+      <div class="result-item"><span class="r-label">Sincronización</span><span class="r-value">${
+        syncStatus === 'synced' ? 'Al día' : syncStatus === 'syncing' ? 'Guardando…' : syncStatus === 'error' ? 'Error' : '—'
+      }</span></div>`;
+  } else {
+    logueado.classList.add('hidden');
+    invitado.classList.remove('hidden');
+  }
+  actualizarAuthChip();
+}
+
+function mostrarErrorAuth(id, err) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const map = {
+    'auth/email-already-in-use': 'Ese correo ya tiene cuenta. Prueba entrar.',
+    'auth/invalid-email': 'Correo no válido.',
+    'auth/weak-password': 'La contraseña debe tener al menos 6 caracteres.',
+    'auth/user-not-found': 'No hay cuenta con ese correo.',
+    'auth/wrong-password': 'Contraseña incorrecta.',
+    'auth/invalid-credential': 'Correo o contraseña incorrectos.',
+    'auth/too-many-requests': 'Demasiados intentos. Espera un momento.',
+    'auth/network-request-failed': 'Sin conexión. Revisa internet.',
+    'auth/operation-not-allowed': 'Email/contraseña no está activo en Firebase Console.',
+    'auth/unauthorized-domain': 'Agrega monsallve.github.io en Authentication → Settings → Authorized domains.',
+  };
+  const code = err && err.code;
+  el.textContent = map[code] || (err && err.message) || 'Error de autenticación';
+  el.classList.remove('hidden');
+}
+
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass = document.getElementById('login-password').value;
+  const errBox = document.getElementById('login-error');
+  errBox.classList.add('hidden');
+  if (!firebaseListo) {
+    errBox.textContent = 'Firebase no está configurado. Edita js/firebase-config.js';
+    errBox.classList.remove('hidden');
+    return;
+  }
+  try {
+    await fbAuth.signInWithEmailAndPassword(email, pass);
+  } catch (err) {
+    mostrarErrorAuth('login-error', err);
+  }
+}
+
+async function doRegistro() {
+  const email = document.getElementById('reg-email').value.trim();
+  const pass = document.getElementById('reg-password').value;
+  const pass2 = document.getElementById('reg-password2').value;
+  const errBox = document.getElementById('reg-error');
+  errBox.classList.add('hidden');
+  if (pass !== pass2) {
+    errBox.textContent = 'Las contraseñas no coinciden.';
+    errBox.classList.remove('hidden');
+    return;
+  }
+  if (!firebaseListo) {
+    errBox.textContent = 'Firebase no está configurado. Edita js/firebase-config.js';
+    errBox.classList.remove('hidden');
+    return;
+  }
+  try {
+    await fbAuth.createUserWithEmailAndPassword(email, pass);
+  } catch (err) {
+    mostrarErrorAuth('reg-error', err);
+  }
+}
+
+async function doLogout() {
+  try {
+    if (fbAuth) await fbAuth.signOut();
+  } catch (err) {
+    console.warn(err);
+  }
+}
+
+function escucharAuth() {
+  if (!fbAuth) return;
+  fbAuth.onAuthStateChanged(async (user) => {
+    usuario = user;
+    if (user) {
+      // Cargar datos de este usuario desde la nube
+      await cargarDesdeNube();
+      invalidarSimCache();
+      renderHome();
+      if (vistaActual === 'cuenta') renderCuenta();
+    } else {
+      syncStatus = 'local';
+      // Volver a datos locales del dispositivo
+      cargar();
+      if (!estado.escenarios?.length) {
+        const e = nuevoEscenario('Escenario A');
+        estado = { activoId: e.id, escenarios: [e] };
+        guardarLocal();
+      }
+      renderHome();
+      if (vistaActual === 'cuenta') renderCuenta();
+    }
+    actualizarAuthChip();
+  });
+}
+
 function on(id, ev, fn) {
   const el = document.getElementById(id);
   if (!el) {
@@ -1347,9 +1580,12 @@ function on(id, ev, fn) {
 function init() {
   try {
   cargar();
+  initFirebase();
+  if (firebaseListo) escucharAuth();
   initHistorial();
   renderHome();
   mostrarVista('home', { skipHistory: true });
+  actualizarAuthChip();
 
   document.getElementById('btn-nuevo-cdt').addEventListener('click', () => abrirNuevoCDT());
   document.getElementById('btn-ir-aportes').addEventListener('click', () => {
@@ -1498,6 +1734,22 @@ function init() {
   on('btn-nav-aportes', 'click', () => { renderAportesLista(); mostrarVista('aportes'); });
   on('btn-nav-inversiones', 'click', () => { renderInversionesLista(); mostrarVista('inversiones'); });
   on('btn-nav-metas', 'click', () => { renderMetasLista(); mostrarVista('metas'); });
+
+  // Cuenta / Auth
+  on('btn-cuenta', 'click', () => { renderCuenta(); mostrarVista('cuenta'); });
+  on('btn-volver-cuenta', 'click', volverAtras);
+  on('btn-do-login', 'click', doLogin);
+  on('btn-do-registro', 'click', doRegistro);
+  on('btn-cerrar-sesion', 'click', doLogout);
+  document.querySelectorAll('#auth-tabs .auth-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#auth-tabs .auth-tab').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.dataset.tab;
+      document.getElementById('auth-panel-login').classList.toggle('hidden', tab !== 'login');
+      document.getElementById('auth-panel-registro').classList.toggle('hidden', tab !== 'registro');
+    });
+  });
 
   } catch (err) {
     console.error('Error al iniciar Monsallve Financiero:', err);
