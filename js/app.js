@@ -117,7 +117,9 @@ function snapshotCDT(b, fecha) {
   const diasTrans = Math.min(Math.max(0, daysBetween(b.fechaInicio, fecha)), dias);
   out.diasTranscurridos = diasTrans;
   out.estado = vencido ? 'vencido' : 'activo';
-  const n = vencido ? dias : diasTrans;
+  // "Único al vencimiento" no devenga hasta la fecha fin.
+  let n = vencido ? dias : diasTrans;
+  if (tipo === 'unico' && !vencido) n = 0;
   const bruto = valorBrutoEnDias(capital, tasa, tipo, n) - capital;
   const retencion = bruto * retPct;
   const neto = bruto - retencion;
@@ -221,7 +223,14 @@ function simularCaja(fechaInclusive, excludeId = null) {
     return empty;
   }
 
-  while (cursor <= fechaInclusive) {
+  // Tope ~80 años: una fecha lejana no puede congelar la pantalla
+  const topeSim = addDays(minF, 366 * 80);
+  if (fechaInclusive > topeSim) fechaInclusive = topeSim;
+
+  const MAX_PASOS = 366 * 80 + 2;
+  let pasos = 0;
+  while (cursor <= fechaInclusive && pasos < MAX_PASOS) {
+    pasos += 1;
     const apertura = balance;
     const inter = interesDiarioCaja(apertura, cfg);
     balance += inter.neto;
@@ -265,9 +274,9 @@ function simularCaja(fechaInclusive, excludeId = null) {
       });
     }
 
+    const prev = cursor;
     cursor = addDays(cursor, 1);
-    // safety: max ~40 years
-    if (dias.length > 15000) break;
+    if (!cursor || cursor <= prev) break;
   }
 
   const result = {
@@ -316,15 +325,15 @@ function patrimonioEn(fecha) {
 function detectarSobregiro() {
   const e = esc();
   if (!e) return null;
-  const fechas = new Set();
-  (e.aportes || []).forEach((a) => { if (a.fecha) fechas.add(a.fecha); });
+  let maxF = fechaSim();
+  (e.aportes || []).forEach((a) => { if (a.fecha && a.fecha > maxF) maxF = a.fecha; });
   (e.bolsillos || []).forEach((b) => {
-    if (b.fechaInicio) fechas.add(b.fechaInicio);
-    if (b.fechaFin) fechas.add(b.fechaFin);
+    if (b.fechaInicio && b.fechaInicio > maxF) maxF = b.fechaInicio;
+    if (b.fechaFin && b.fechaFin > maxF) maxF = b.fechaFin;
   });
-  for (const f of [...fechas].sort()) {
-    const d = disponibleEn(f);
-    if (d < -0.5) return { fecha: f, monto: d };
+  const sim = simularCaja(maxF);
+  for (const d of sim.dias) {
+    if (d.cierre < -0.5) return { fecha: d.fecha, monto: d.cierre };
   }
   return null;
 }
@@ -418,6 +427,7 @@ function normalizarEstado(raw) {
   estado = raw;
   if (!estado.activoId) estado.activoId = estado.escenarios[0].id;
   estado.escenarios.forEach((e) => {
+    if (!e.fechaSim) e.fechaSim = hoyISO();
     if (!e.aportes) e.aportes = [];
     if (!e.bolsillos) e.bolsillos = [];
     if (!e.caja) e.caja = { tasa: 4, retencion: 7, umbral: 2881 };
@@ -438,6 +448,18 @@ function normalizarEstado(raw) {
       }
       delete e.meta;
     }
+    e.aportes.forEach((a) => { a.monto = num(a.monto); });
+    e.metas.forEach((m) => { m.monto = num(m.monto); });
+    e.bolsillos.forEach((b) => {
+      b.capital = num(b.capital);
+      b.tasa = num(b.tasa);
+      b.retencion = b.retencion == null ? 4 : num(b.retencion, 4);
+      if (!TIPOS.some((t) => t.value === b.tipo)) b.tipo = 'simple';
+      if (b.modoPlazo !== 'fecha') b.modoPlazo = 'dias';
+      if (!b.fechaInicio) b.fechaInicio = e.fechaSim || hoyISO();
+      if (!b.fechaFin) b.fechaFin = addDays(b.fechaInicio, Math.max(1, parseInt(b.dias, 10) || 90));
+      syncPlazo(b, b.modoPlazo === 'dias' ? 'dias' : 'fin');
+    });
   });
   return true;
 }
@@ -459,16 +481,12 @@ function guardar() {
   }
 }
 
-function cargar() {
+function estadoDesdeLocal() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (normalizarEstado(parsed)) return;
-    }
-  } catch { /* migrate */ }
+    if (raw && normalizarEstado(JSON.parse(raw))) return true;
+  } catch { /* migrar */ }
 
-  // Migrar v9 / anteriores
   const keys = ['vault_cdt_v9', 'vault_cdt_v8', 'vault_cdt_v7', 'vault_cdt_v5'];
   for (const k of keys) {
     const prev = localStorage.getItem(k);
@@ -495,15 +513,20 @@ function cargar() {
       }
       if (e) {
         estado = { activoId: e.id, escenarios: [e] };
-        guardar();
-        return;
+        return normalizarEstado(estado);
       }
     } catch { /* next */ }
   }
+  return false;
+}
 
-  const e = nuevoEscenario('Escenario A');
-  estado = { activoId: e.id, escenarios: [e] };
-  guardar();
+function cargarLocalONuevo() {
+  if (!estadoDesdeLocal()) {
+    const e = nuevoEscenario('Escenario A');
+    estado = { activoId: e.id, escenarios: [e] };
+    normalizarEstado(estado);
+  }
+  guardarLocal();
 }
 
 /* ---------- navegación (historial Android / botón atrás) ---------- */
@@ -600,11 +623,20 @@ function initHistorial() {
   } catch (e) { /* ignore */ }
 
   window.addEventListener('popstate', (ev) => {
+    if (!ev.state || !ev.state.vista) {
+      const vista = usuario ? (navStack[navStack.length - 1] || 'home') : 'gate';
+      const stack = usuario ? (navStack.length ? navStack.slice() : ['home']) : ['gate'];
+      navStack = stack;
+      try { history.pushState({ vista, stack }, '', '#' + vista); } catch (e) { /* ignore */ }
+      aplicarVista(vista);
+      return;
+    }
     if (!usuario) {
       navSilent = true;
       try {
         aplicarVista('gate');
-        history.replaceState({ vista: 'gate', stack: ['gate'] }, '', '#gate');
+        navStack = ['gate'];
+        history.pushState({ vista: 'gate', stack: ['gate'] }, '', '#gate');
       } finally { navSilent = false; }
       return;
     }
@@ -725,7 +757,7 @@ function renderInversionesLista() {
   if (!lista) return;
   lista.innerHTML = '';
 
-  if (!e.bolsillos.length) {
+  if (!e || !e.bolsillos || !e.bolsillos.length) {
     lista.innerHTML = '<p class="empty-msg">Sin inversiones en este escenario.</p>';
     return;
   }
@@ -760,8 +792,9 @@ function renderInversionesLista() {
 /* ---------- ESCENARIOS ---------- */
 function renderEscenarios() {
   const lista = document.getElementById('lista-escenarios');
+  if (!lista) return;
   lista.innerHTML = '';
-  estado.escenarios.forEach((e) => {
+  (estado.escenarios || []).forEach((e) => {
     const activo = e.id === estado.activoId;
     const row = document.createElement('div');
     row.className = `item-row escenario-row ${activo ? 'activo' : ''}`;
@@ -964,7 +997,10 @@ function crearCDTDesdeDraft() {
     err.textContent = 'Define un plazo válido.'; err.classList.remove('hidden'); return;
   }
   err.classList.add('hidden');
-  esc().bolsillos.unshift({
+  const destino = esc();
+  if (!destino) return;
+  if (!destino.bolsillos) destino.bolsillos = [];
+  destino.bolsillos.unshift({
     id: uid(),
     nombre: nuevoDraft.nombre,
     capital: nuevoDraft.capital,
@@ -989,8 +1025,55 @@ function abrirDetalle(id) {
   mostrarVista('detalle');
 }
 
+function pintarResultadoDetalle(b) {
+  const body = document.getElementById('detalle-body');
+  if (!body || !b) return;
+  const s = snapshotCDT(b, fechaSim());
+  const vals = body.querySelectorAll('.result-box .r-value');
+  if (vals.length >= 5) {
+    vals[0].textContent = fmt(s.capital);
+    vals[1].textContent = fmt(s.bruto);
+    vals[2].textContent = '−' + fmt(s.retencion);
+    vals[3].textContent = fmt(s.neto);
+    vals[4].textContent = fmt(s.totalFinal);
+  }
+  const fill = body.querySelector('.progress-fill');
+  const pct = s.dias > 0 ? Math.min(100, (s.diasTranscurridos / s.dias) * 100) : 0;
+  if (fill) {
+    fill.style.width = pct + '%';
+    fill.classList.toggle('done', s.estado === 'vencido');
+  }
+  const meta = body.querySelectorAll('.progress-meta span');
+  if (meta.length >= 2) {
+    meta[0].textContent = s.diasTranscurridos + ' / ' + s.dias + ' días';
+    meta[1].textContent = (s.dias > 0 ? pct.toFixed(0) : '0') + '%';
+  }
+  const pill = body.querySelector('.detalle-status .pill');
+  const val = body.querySelector('.detalle-status-val');
+  const status = body.querySelector('.detalle-status');
+  if (pill) pill.textContent = s.estado === 'activo' ? 'Activo' : s.estado === 'vencido' ? 'Vencido · liberado' : 'Por iniciar';
+  if (val) val.textContent = fmt(s.estado === 'sin_iniciar' ? s.capital : s.total);
+  if (status) {
+    status.classList.remove('estado-activo', 'estado-vencido', 'estado-sin_iniciar');
+    status.classList.add('estado-' + s.estado);
+  }
+  const diasInput = body.querySelector('[data-d="dias"]');
+  const finInput = body.querySelector('[data-d="fechaFin"]');
+  const capInput = body.querySelector('[data-d="capital"]');
+  if (diasInput && document.activeElement !== diasInput) diasInput.value = b.dias;
+  if (finInput && document.activeElement !== finInput) finInput.value = b.fechaFin || '';
+  if (capInput && document.activeElement !== capInput) capInput.value = b.capital;
+  if (capInput && capInput.parentElement) {
+    const lab = capInput.parentElement.querySelector('label');
+    if (lab) lab.textContent = 'Capital (máx ' + fmtShort(disponibleEn(b.fechaInicio, b.id)) + ')';
+  }
+  const btnRe = body.querySelector('#btn-reinvertir');
+  if (btnRe && b.fechaFin) btnRe.textContent = 'Reinvertir ' + fmtShort(snapshotCDT(b, b.fechaFin).totalFinal);
+}
+
 function renderDetalle() {
-  const b = esc().bolsillos.find((x) => x.id === detalleId);
+  const actual = esc();
+  const b = actual && actual.bolsillos.find((x) => x.id === detalleId);
   if (!b) { mostrarVista('home'); renderHome(); return; }
   document.getElementById('detalle-titulo').textContent = b.nombre || 'Inversión';
   const f = fechaSim();
@@ -1089,10 +1172,10 @@ function renderDetalle() {
     const field = input.dataset.d;
     const ev = input.tagName === 'SELECT' || input.type === 'date' ? 'change' : 'input';
     input.addEventListener(ev, () => {
+      const estadoAntes = snapshotCDT(b, fechaSim()).estado;
       let val = input.value;
       if (['capital', 'tasa', 'dias', 'retencion'].includes(field)) val = num(val);
 
-      // Idea 5: tope automático de capital
       if (field === 'capital') {
         const max = disponibleEn(b.fechaInicio, b.id);
         if (val > max) {
@@ -1102,8 +1185,8 @@ function renderDetalle() {
       }
       b[field] = val;
       if (field === 'fechaInicio') {
+        if (!b.fechaInicio) b.fechaInicio = fechaSim();
         syncPlazo(b, 'inicio');
-        // Re-tope capital si cambia inicio
         const max = disponibleEn(b.fechaInicio, b.id);
         if (num(b.capital) > max) b.capital = Math.max(0, max);
       } else if (field === 'fechaFin') syncPlazo(b, 'fin');
@@ -1111,18 +1194,11 @@ function renderDetalle() {
 
       if (field === 'nombre') document.getElementById('detalle-titulo').textContent = b.nombre || 'Inversión';
       guardar();
-      if (['fechaInicio', 'fechaFin', 'tipo', 'dias'].includes(field)) renderDetalle();
-      else {
-        const snap = snapshotCDT(b, fechaSim());
-        const vals = body.querySelectorAll('.result-box .r-value');
-        if (vals.length >= 5) {
-          vals[0].textContent = fmt(snap.capital);
-          vals[1].textContent = fmt(snap.bruto);
-          vals[2].textContent = '−' + fmt(snap.retencion);
-          vals[3].textContent = fmt(snap.neto);
-          vals[4].textContent = fmt(snap.totalFinal);
-        }
+      if (snapshotCDT(b, fechaSim()).estado !== estadoAntes) {
+        renderDetalle();
+        return;
       }
+      pintarResultadoDetalle(b);
     });
   });
 }
@@ -1214,10 +1290,11 @@ function actualizarInfoMeta() {
 }
 
 function guardarMeta() {
+  const e = esc();
+  if (!e) return;
   const nombre = document.getElementById('meta-nombre').value.trim() || 'Meta';
   const fecha = document.getElementById('meta-fecha').value || '';
   const monto = num(document.getElementById('meta-monto').value);
-  const e = esc();
   if (!e.metas) e.metas = [];
   if (metaEditId) {
     const m = e.metas.find((x) => x.id === metaEditId);
@@ -1311,14 +1388,17 @@ function abrirAporte(id = null, silent = false) {
 }
 
 function guardarAporte() {
+  const e = esc();
+  if (!e) return;
   const fecha = document.getElementById('aporte-fecha').value || fechaSim();
   const monto = num(document.getElementById('aporte-monto').value);
   const nota = document.getElementById('aporte-nota').value.trim() || 'Aporte';
+  if (!e.aportes) e.aportes = [];
   if (aporteEditId) {
-    const a = esc().aportes.find((x) => x.id === aporteEditId);
+    const a = e.aportes.find((x) => x.id === aporteEditId);
     if (a) { a.fecha = fecha; a.monto = monto; a.nota = nota; }
   } else {
-    esc().aportes.push({ id: uid(), fecha, monto, nota });
+    e.aportes.push({ id: uid(), fecha, monto, nota });
   }
   guardar();
   aporteEditId = null;
@@ -1335,13 +1415,17 @@ function pedirEliminar(type, id, nombre) {
 function eliminarConfirmado() {
   if (!deleteTarget) return;
   const tipo = deleteTarget.type;
+  const e = esc();
   if (tipo === 'cdt') {
-    esc().bolsillos = esc().bolsillos.filter((b) => b.id !== deleteTarget.id);
+    if (!e) return;
+    e.bolsillos = (e.bolsillos || []).filter((b) => b.id !== deleteTarget.id);
   } else if (tipo === 'aporte') {
-    esc().aportes = esc().aportes.filter((a) => a.id !== deleteTarget.id);
+    if (!e) return;
+    e.aportes = (e.aportes || []).filter((a) => a.id !== deleteTarget.id);
     aporteEditId = null;
   } else if (tipo === 'meta') {
-    esc().metas = (esc().metas || []).filter((m) => m.id !== deleteTarget.id);
+    if (!e) return;
+    e.metas = (e.metas || []).filter((m) => m.id !== deleteTarget.id);
     metaEditId = null;
   } else if (tipo === 'escenario') {
     estado.escenarios = estado.escenarios.filter((e) => e.id !== deleteTarget.id);
@@ -1441,6 +1525,8 @@ function normalizarUsername(u) {
   return String(u || '')
     .trim()
     .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, '')
     .replace(/[^a-z0-9._-]/g, '');
 }
@@ -1498,7 +1584,10 @@ async function usernameDisponible(username, exceptUid) {
 async function reservarUsername(username, uid) {
   const check = await usernameDisponible(username, uid);
   if (!check.ok) throw new Error(check.msg);
-  await fbDb.collection('usernames').doc(check.key).set({
+  const ref = fbDb.collection('usernames').doc(check.key);
+  const snap = await ref.get();
+  if (snap.exists && (snap.data() || {}).uid === uid) return check.key;
+  await ref.set({
     uid,
     username: check.key,
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -1525,13 +1614,14 @@ async function cargarPerfil(uid) {
       username: d.username || '',
       email: d.email || (usuario && usuario.email) || '',
     };
+    let cargoEstado = false;
     if (d.estado && typeof d.estado === 'object') {
-      try { normalizarEstado(d.estado); } catch (e) { console.warn('estado inválido', e); }
+      try { cargoEstado = !!normalizarEstado(d.estado); } catch (e) { console.warn('estado inválido', e); }
     }
-    return d;
+    return { doc: d, cargoEstado };
   }
   perfilUsuario = { username: '', email: (usuario && usuario.email) || '' };
-  return null;
+  return { doc: null, cargoEstado: false };
 }
 
 
@@ -1573,35 +1663,28 @@ async function cargarDesdeNube() {
   if (!usuario || !fbDb) return false;
   try {
     const data = await cargarPerfil(usuario.uid);
-    if (data && data.estado) {
+    if (data && data.cargoEstado) {
       asegurarEstadoMinimo();
       guardarLocal();
       syncStatus = 'synced';
       return true;
     }
-    // Usuario autenticado sin documento o sin estado
-    asegurarEstadoMinimo();
-    // Intentar crear doc; si falla por reglas, seguimos con estado local
+    // Sin documento en la nube: conservar lo que haya en este dispositivo
+    cargarLocalONuevo();
     try { await guardarNube(); } catch (e) { console.warn(e); }
     return false;
   } catch (err) {
     console.error('cargarDesdeNube', err);
     syncStatus = 'error';
-    // Fallback: datos locales del dispositivo
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) normalizarEstado(JSON.parse(raw));
-    } catch (e) { /* ignore */ }
-    asegurarEstadoMinimo();
+    try { cargarLocalONuevo(); } catch (e) { asegurarEstadoMinimo(); }
     return false;
   }
 }
 
 function necesitaVerificarEmail(user) {
   if (!user) return false;
-  // Google y proveedores externos suelen venir verificados
-  const provider = (user.providerData && user.providerData[0] && user.providerData[0].providerId) || '';
-  if (provider === 'google.com') return false;
+  const providers = (user.providerData || []).map((p) => p.providerId);
+  if (providers.indexOf('password') < 0) return false;
   return user.emailVerified === false;
 }
 
@@ -1696,6 +1779,227 @@ async function continueAfterVerify() {
   setAuthLoading(false);
 }
 
+let registroEnCurso = false;
+
+function tr(es, en) {
+  return window.currentLang === 'en' ? en : es;
+}
+
+function showFormError(id, text, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!text) {
+    el.textContent = '';
+    el.style.color = '';
+    el.classList.add('hidden');
+    return;
+  }
+  el.style.color = ok ? 'var(--gold)' : '';
+  el.textContent = text;
+  el.classList.remove('hidden');
+}
+
+function msgAuth(err) {
+  const code = (err && err.code) || '';
+  const map = {
+    'auth/invalid-email': tr('Correo no válido.', 'Invalid email.'),
+    'auth/missing-email': tr('Escribe tu correo.', 'Enter your email.'),
+    'auth/user-not-found': tr('No hay una cuenta con ese correo.', 'No account for that email.'),
+    'auth/wrong-password': tr('Correo o contraseña incorrectos.', 'Wrong email or password.'),
+    'auth/invalid-credential': tr('Correo o contraseña incorrectos.', 'Wrong email or password.'),
+    'auth/invalid-login-credentials': tr('Correo o contraseña incorrectos.', 'Wrong email or password.'),
+    'auth/email-already-in-use': tr('Ese correo ya está registrado.', 'That email is already registered.'),
+    'auth/weak-password': tr('La contraseña debe tener al menos 6 caracteres.', 'Password must be at least 6 characters.'),
+    'auth/too-many-requests': tr('Demasiados intentos. Espera un momento.', 'Too many attempts. Wait a moment.'),
+    'auth/network-request-failed': tr('Sin conexión. Revisa internet.', 'You are offline. Check your connection.'),
+    'auth/popup-closed-by-user': tr('Cerraste la ventana de Google.', 'The Google window was closed.'),
+    'auth/popup-blocked': tr('El navegador bloqueó la ventana de Google.', 'The browser blocked the Google window.'),
+    'auth/account-exists-with-different-credential': tr('Ese correo ya entra con otro método.', 'That email already uses another sign-in method.'),
+  };
+  return map[code] || (err && err.message) || tr('No se pudo completar.', 'Something went wrong.');
+}
+
+function toggleEye(btn) {
+  const input = document.getElementById(btn && btn.getAttribute('data-target'));
+  if (!input) return;
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  btn.setAttribute('aria-label', show ? tr('Ocultar contraseña', 'Hide password') : tr('Ver contraseña', 'Show password'));
+}
+
+function renderCuenta() {
+  if (!usuario) return;
+  const name = (perfilUsuario && perfilUsuario.username) || '';
+  const userEl = document.getElementById('cuenta-username');
+  const input = document.getElementById('perfil-username');
+  const email = document.getElementById('cuenta-email');
+  const sync = document.getElementById('cuenta-sync-info');
+  if (userEl) userEl.textContent = name ? '@' + name : '—';
+  if (input && document.activeElement !== input) input.value = name;
+  if (email) email.value = usuario.email || '';
+  const syncTxt = syncStatus === 'synced' ? tr('Guardado en la nube', 'Saved in the cloud')
+    : syncStatus === 'syncing' ? tr('Guardando…', 'Saving…')
+    : syncStatus === 'error' ? tr('No se pudo guardar en la nube. Los datos siguen en este dispositivo.', 'Cloud save failed. Data is still on this device.')
+    : tr('Solo en este dispositivo', 'On this device only');
+  if (sync) {
+    sync.innerHTML = '<div class="result-item"><span class="r-label">Sync</span><span class="r-value">' + syncTxt + '</span></div>';
+  }
+  showFormError('perfil-user-error', '');
+  showFormError('perfil-pass-msg', '');
+  if (typeof applyI18n === 'function') applyI18n();
+  actualizarAuthChip();
+}
+
+async function doLogin() {
+  showFormError('login-error', '');
+  if (!fbAuth) { showFormError('login-error', tr('Firebase no está listo.', 'Firebase is not ready.')); return; }
+  const email = (document.getElementById('login-email').value || '').trim();
+  const pass = document.getElementById('login-password').value || '';
+  if (!email || !pass) {
+    showFormError('login-error', tr('Escribe correo y contraseña.', 'Enter email and password.'));
+    return;
+  }
+  setAuthLoading(true, typeof t === 'function' ? t('loading_enter') : 'Entrando…');
+  try {
+    await fbAuth.signInWithEmailAndPassword(email, pass);
+  } catch (err) {
+    setAuthLoading(false);
+    showFormError('login-error', msgAuth(err));
+  }
+}
+
+async function doRegistro() {
+  if (registroEnCurso) return;
+  showFormError('reg-error', '');
+  if (!fbAuth) { showFormError('reg-error', tr('Firebase no está listo.', 'Firebase is not ready.')); return; }
+  const username = document.getElementById('reg-username').value;
+  const email = (document.getElementById('reg-email').value || '').trim();
+  const p1 = document.getElementById('reg-password').value || '';
+  const p2 = document.getElementById('reg-password2').value || '';
+  if (!email) { showFormError('reg-error', tr('Escribe un correo.', 'Enter an email.')); return; }
+  if (p1.length < 6) { showFormError('reg-error', tr('La contraseña debe tener al menos 6 caracteres.', 'Password must be at least 6 characters.')); return; }
+  if (p1 !== p2) { showFormError('reg-error', tr('Las contraseñas no coinciden.', 'Passwords do not match.')); return; }
+  const check = await usernameDisponible(username);
+  if (!check.ok) { showFormError('reg-error', check.msg); return; }
+
+  registroEnCurso = true;
+  setAuthLoading(true, typeof t === 'function' ? t('loading_create') : 'Creando cuenta…');
+  try {
+    const cred = await fbAuth.createUserWithEmailAndPassword(email, p1);
+    usuario = cred.user;
+    try {
+      const key = await reservarUsername(check.key, cred.user.uid);
+      perfilUsuario = { username: key, email: cred.user.email || email };
+      await guardarNube();
+    } catch (e) {
+      console.warn(e);
+      perfilUsuario = { username: '', email: cred.user.email || email };
+    }
+    try { await cred.user.sendEmailVerification(); } catch (e) { console.warn(e); }
+    await entrarAppTrasAuth();
+  } catch (err) {
+    showFormError('reg-error', msgAuth(err));
+  } finally {
+    registroEnCurso = false;
+    setAuthLoading(false);
+  }
+}
+
+async function doGoogle() {
+  showFormError('login-error', '');
+  if (!fbAuth) { showFormError('login-error', tr('Firebase no está listo.', 'Firebase is not ready.')); return; }
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  setAuthLoading(true, typeof t === 'function' ? t('loading_google') : 'Conectando con Google…');
+  try {
+    await fbAuth.signInWithPopup(provider);
+  } catch (err) {
+    const code = err && err.code;
+    if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+      try {
+        await fbAuth.signInWithRedirect(provider);
+        return;
+      } catch (e2) {
+        setAuthLoading(false);
+        showFormError('login-error', msgAuth(e2));
+        return;
+      }
+    }
+    setAuthLoading(false);
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
+    showFormError('login-error', msgAuth(err));
+  }
+}
+
+async function doLogout() {
+  if (!fbAuth) return;
+  setAuthLoading(true, typeof t === 'function' ? t('loading_logout') : 'Cerrando sesión…');
+  try {
+    await fbAuth.signOut();
+  } catch (err) {
+    setAuthLoading(false);
+    showFormError('perfil-pass-msg', msgAuth(err));
+  }
+}
+
+async function forgotFromGate() {
+  showFormError('login-error', '');
+  if (!fbAuth) return;
+  const email = (document.getElementById('login-email').value || '').trim();
+  if (!email) {
+    showFormError('login-error', tr('Escribe tu correo para enviarte el enlace.', 'Enter your email to get the reset link.'));
+    return;
+  }
+  setAuthLoading(true, typeof t === 'function' ? t('loading_mail') : 'Enviando correo…');
+  try {
+    await fbAuth.sendPasswordResetEmail(email);
+    showFormError('login-error', tr('Te enviamos un enlace para restablecer la contraseña.', 'We sent a link to reset your password.'), true);
+  } catch (err) {
+    showFormError('login-error', msgAuth(err));
+  }
+  setAuthLoading(false);
+}
+
+async function enviarResetPassword() {
+  showFormError('perfil-pass-msg', '');
+  if (!fbAuth || !usuario || !usuario.email) {
+    showFormError('perfil-pass-msg', tr('Esta cuenta no tiene correo para restablecer la contraseña.', 'This account has no email to reset the password.'));
+    return;
+  }
+  setAuthLoading(true, typeof t === 'function' ? t('loading_mail') : 'Enviando correo…');
+  try {
+    await fbAuth.sendPasswordResetEmail(usuario.email);
+    showFormError('perfil-pass-msg', tr('Enlace enviado. Revisa tu correo.', 'Link sent. Check your inbox.'), true);
+  } catch (err) {
+    showFormError('perfil-pass-msg', msgAuth(err));
+  }
+  setAuthLoading(false);
+}
+
+async function guardarUsernamePerfil() {
+  showFormError('perfil-user-error', '');
+  if (!usuario || !fbDb) return;
+  const prev = (perfilUsuario && perfilUsuario.username) || '';
+  const check = await usernameDisponible(document.getElementById('perfil-username').value, usuario.uid);
+  if (!check.ok) { showFormError('perfil-user-error', check.msg); return; }
+  if (prev === check.key) {
+    showFormError('perfil-user-error', tr('Ese ya es tu nombre de usuario.', 'That is already your username.'), true);
+    return;
+  }
+  setAuthLoading(true, typeof t === 'function' ? t('loading_save') : 'Guardando…');
+  try {
+    await reservarUsername(check.key, usuario.uid);
+    if (prev && prev !== check.key) await liberarUsername(prev);
+    perfilUsuario = { username: check.key, email: usuario.email || (perfilUsuario && perfilUsuario.email) || '' };
+    await guardarNube();
+    renderCuenta();
+    showFormError('perfil-user-error', tr('Nombre de usuario guardado.', 'Username saved.'), true);
+  } catch (err) {
+    showFormError('perfil-user-error', msgAuth(err));
+  }
+  setAuthLoading(false);
+}
+
 function escucharAuth() {
   if (!fbAuth) return;
   // Evitar condiciones de carrera si onAuthStateChanged dispara dos veces
@@ -1703,6 +2007,7 @@ function escucharAuth() {
   fbAuth.onAuthStateChanged(async (user) => {
     const my = ++gen;
     usuario = user;
+    if (registroEnCurso) return;
     if (user) {
       try {
         await entrarAppTrasAuth();
@@ -1743,13 +2048,20 @@ function init() {
   mostrarVista('gate', { skipHistory: true });
   if (firebaseListo) {
     escucharAuth();
+    fbAuth.getRedirectResult().catch((err) => {
+      setAuthLoading(false);
+      if (err && err.code && err.code !== 'auth/no-auth-event') showFormError('login-error', msgAuth(err));
+    });
     // Red de seguridad: nunca dejar la pantalla colgada
     setTimeout(() => {
       const el = document.getElementById('auth-loading');
       if (el && !el.classList.contains('hidden')) {
         console.warn('Auth loading timeout — forzando UI');
         setAuthLoading(false);
-        if (usuario) {
+        if (usuario && necesitaVerificarEmail(usuario)) {
+          renderVerify();
+          mostrarVista('verify', { replace: true });
+        } else if (usuario) {
           asegurarEstadoMinimo();
           mostrarVista('home', { replace: true });
           try { renderHome(); } catch (e) {}
@@ -1848,15 +2160,21 @@ function init() {
   document.getElementById('btn-confirm-delete').addEventListener('click', eliminarConfirmado);
 
   const inputF = document.getElementById('input-fecha-sim');
-  inputF.addEventListener('change', () => {
-    esc().fechaSim = inputF.value || hoyISO();
-    guardar();
-    renderHome();
-  });
-  inputF.addEventListener('input', () => {
-    esc().fechaSim = inputF.value || hoyISO();
-    actualizarTotales();
-  });
+  if (inputF) {
+    inputF.addEventListener('change', () => {
+      const e = esc();
+      if (!e) return;
+      e.fechaSim = inputF.value || hoyISO();
+      guardar();
+      renderHome();
+    });
+    inputF.addEventListener('input', () => {
+      const e = esc();
+      if (!e || !inputF.value) return;
+      e.fechaSim = inputF.value;
+      actualizarTotales();
+    });
+  }
 
   // Metas (lista + detalle)
   document.getElementById('btn-ir-metas').addEventListener('click', () => {
@@ -1904,6 +2222,7 @@ function init() {
   });
   on('btn-guardar-caja', 'click', () => {
     const e = esc();
+    if (!e) return;
     e.caja = {
       tasa: num(document.getElementById('caja-tasa').value, 4),
       retencion: num(document.getElementById('caja-retencion').value, 7),
@@ -1939,6 +2258,12 @@ function init() {
   on('btn-verify-resend', 'click', resendVerification);
   on('btn-verify-continue', 'click', continueAfterVerify);
   on('btn-verify-logout', 'click', doLogout);
+  ['login-email', 'login-password'].forEach((id) => {
+    on(id, 'keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); doLogin(); } });
+  });
+  ['reg-username', 'reg-email', 'reg-password', 'reg-password2'].forEach((id) => {
+    on(id, 'keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); doRegistro(); } });
+  });
   document.querySelectorAll('.btn-eye').forEach((btn) => {
     btn.addEventListener('click', () => toggleEye(btn));
   });

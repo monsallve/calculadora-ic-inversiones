@@ -1,5 +1,5 @@
-/* Monsallve Financiero SW v4 */
-const CACHE_NAME = 'monsallve-v7';
+/* Monsallve Financiero SW v8 — red primero, así los arreglos llegan a la PWA */
+const CACHE_NAME = 'monsallve-v8';
 
 const ASSETS = [
   './',
@@ -7,6 +7,7 @@ const ASSETS = [
   './css/styles.css',
   './js/app.js',
   './js/i18n.js',
+  './js/firebase-config.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -40,34 +41,35 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
 
   event.respondWith((async () => {
-    if (req.mode === 'navigate') {
+    let sameOrigin = false;
+    try { sameOrigin = new URL(req.url).origin === self.location.origin; } catch (e) { /* ignore */ }
+
+    if (req.mode === 'navigate' || sameOrigin) {
       try {
         const net = await fetch(req);
-        const cache = await caches.open(CACHE_NAME);
-        try { await cache.put('./index.html', net.clone()); } catch (e) {}
+        if (net && (net.ok || req.mode === 'navigate')) {
+          try {
+            const cache = await caches.open(CACHE_NAME);
+            const key = req.mode === 'navigate' ? './index.html' : req;
+            await cache.put(key, net.clone());
+          } catch (e) { /* ignore */ }
+        }
         return net;
-      } catch {
-        return (await caches.match('./index.html'))
-          || (await caches.match('./'))
-          || (await caches.match(req))
-          || new Response('Sin conexión', { status: 503, statusText: 'Offline' });
+      } catch (e) {
+        if (req.mode === 'navigate') {
+          return (await caches.match('./index.html'))
+            || (await caches.match('./'))
+            || (await caches.match(req))
+            || new Response('Sin conexión', { status: 503, statusText: 'Offline' });
+        }
+        return (await caches.match(req)) || Response.error();
       }
     }
 
-    const cached = await caches.match(req);
-    if (cached) return cached;
-
     try {
-      const net = await fetch(req);
-      if (net && net.ok) {
-        try {
-          const cache = await caches.open(CACHE_NAME);
-          await cache.put(req, net.clone());
-        } catch (e) {}
-      }
-      return net;
-    } catch {
-      return cached || Response.error();
+      return await fetch(req);
+    } catch (e) {
+      return (await caches.match(req)) || Response.error();
     }
   })());
 });
