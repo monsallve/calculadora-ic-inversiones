@@ -1244,3 +1244,47 @@ body {
 }
 .btn-install.hidden { display: none !important; }
 .btn-install:active { opacity: 0.85; }
+
+.caja-card { margin-top: 12px; }
+.mov-row.tipo-rendimiento { border-left: 2px solid var(--gold); }
+
+.total-card.grand {
+  position: relative;
+  padding-bottom: 28px;
+}
+.card-link {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--gold);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+.card-link:active { opacity: 0.75; }
+
+.aportes-summary {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+
+.brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+.brand-text h1 { margin: 0; font-size: 1.35rem; }
+.brand-sub {
+  font-size: 0.65rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold);
+  font-family: var(--font-body);
+  font-weight: 500;
+}
+.total-card.en-cdt { padding-bottom: 28px; }

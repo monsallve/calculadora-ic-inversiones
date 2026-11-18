@@ -1,10 +1,10 @@
 {
-  "id": "./",
-  "name": "Vault CDT",
-  "short_name": "Vault",
-  "description": "Simulador de CDTs multi-año con escenarios",
-  "start_url": "./index.html",
-  "scope": "./",
+  "id": "/calculadora-ic-inversiones/",
+  "name": "Monsallve Financiero",
+  "short_name": "Monsallve",
+  "description": "Simulador de patrimonio e inversiones con interés compuesto",
+  "start_url": "/calculadora-ic-inversiones/index.html",
+  "scope": "/calculadora-ic-inversiones/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",
@@ -15,25 +15,25 @@
   "categories": ["finance", "utilities"],
   "icons": [
     {
-      "src": "icons/icon-192.png",
+      "src": "/calculadora-ic-inversiones/icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icons/icon-512.png",
+      "src": "/calculadora-ic-inversiones/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icons/icon-maskable-192.png",
+      "src": "/calculadora-ic-inversiones/icons/icon-maskable-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "icons/icon-maskable-512.png",
+      "src": "/calculadora-ic-inversiones/icons/icon-maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

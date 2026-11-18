@@ -1,8 +1,8 @@
 /**
- * Vault v10 — Escenarios + movimientos + meta + reinvertir + tope capital
+ * Monsallve Financiero — Escenarios + movimientos + meta + reinvertir + tope capital
  */
 
-const STORAGE_KEY = 'vault_cdt_v11';
+const STORAGE_KEY = 'monsallve_v1';
 const TIPOS = [
   { value: 'compuesto_diario', label: 'Compuesto diario' },
   { value: 'compuesto_mensual', label: 'Compuesto mensual' },
@@ -15,6 +15,7 @@ let estado = { activoId: null, escenarios: [] };
 let deleteTarget = null;
 let detalleId = null;
 let aporteEditId = null;
+let metaEditId = null;
 let nuevoDraft = null;
 
 /* ---------- utils ---------- */
@@ -62,7 +63,13 @@ function nuevoEscenario(nombre) {
     fechaSim: hoyISO(),
     aportes: [{ id: uid(), fecha: hoyISO(), monto: 5e7, nota: 'Capital inicial' }],
     bolsillos: [],
-    meta: { fecha: '', monto: 0 },
+    metas: [],
+    // Caja / Disponible (estilo Cajitas NU)
+    caja: {
+      tasa: 4,
+      retencion: 7,
+      umbral: 2881,
+    },
   };
 }
 
@@ -106,23 +113,169 @@ function snapshotCDT(b, fecha) {
   out.bruto = bruto; out.retencion = retencion; out.neto = neto; out.total = capital + neto;
   return out;
 }
-function disponibleEn(fecha, excludeId = null) {
-  if (!fecha) return 0;
-  const e = esc();
-  if (!e) return 0;
-  let d = 0;
-  (e.aportes || []).forEach((a) => {
-    if (a.fecha && a.fecha <= fecha) d += num(a.monto);
-  });
-  (e.bolsillos || []).forEach((b) => {
-    if (excludeId && b.id === excludeId) return;
-    if (!b.fechaInicio) return;
-    const cap = num(b.capital);
-    if (b.fechaInicio <= fecha) d -= cap;
-    if (b.fechaFin && b.fechaFin <= fecha && cap > 0) d += snapshotCDT(b, b.fechaFin).totalFinal;
-  });
-  return d;
+function cajaCfg(e) {
+  const c = e?.caja || {};
+  return {
+    tasa: num(c.tasa, 4),
+    retencion: num(c.retencion, 7),
+    umbral: num(c.umbral, 2881),
+  };
 }
+
+/** Cache de simulación (misma fecha / exclude en un mismo ciclo de render) */
+let _simCacheKey = '';
+let _simCacheVal = null;
+function invalidarSimCache() { _simCacheKey = ''; _simCacheVal = null; }
+
+/** Interés compuesto diario del Disponible a partir de tasa E.A. */
+function interesDiarioCaja(saldo, cfg) {
+  if (!(saldo > 0) || !(cfg.tasa > 0)) {
+    return { bruto: 0, retencion: 0, neto: 0 };
+  }
+  const r = Math.pow(1 + cfg.tasa / 100, 1 / 365) - 1;
+  const bruto = saldo * r;
+  // Regla tipo NU Cajitas: retención solo si el bruto diario supera el umbral (0,055 UVT ≈ $2.881)
+  const retencion = bruto > cfg.umbral ? bruto * (cfg.retencion / 100) : 0;
+  return { bruto, retencion, neto: bruto - retencion };
+}
+
+/**
+ * Simula día a día hasta fechaInclusive.
+ * Orden de cada día D:
+ *   1) Interés sobre el saldo de APERTURA (lo que había al cierre de D-1)
+ *      → el día que creas un CDT aún no “pierde” ese día de rendimiento del disponible
+ *   2) Movimientos del día (aportes, liberaciones, inversiones)
+ * CDT creado el día D: su primer rendimiento aparece el día D+1 (daysBetween >= 1).
+ */
+function simularCaja(fechaInclusive, excludeId = null) {
+  const cacheKey = fechaInclusive + '|' + (excludeId || '') + '|' + (esc()?.id || '');
+  if (_simCacheKey === cacheKey && _simCacheVal) return _simCacheVal;
+
+  const e = esc();
+  const empty = {
+    balance: 0,
+    interesNetoAcum: 0,
+    interesBrutoAcum: 0,
+    retencionAcum: 0,
+    interesHoy: { bruto: 0, retencion: 0, neto: 0, apertura: 0 },
+    dias: [],
+  };
+  if (!e || !fechaInclusive) return empty;
+
+  const cfg = cajaCfg(e);
+  const aportes = (e.aportes || []).filter((a) => a.fecha);
+  const bolsillos = (e.bolsillos || []).filter((b) => b.fechaInicio && !(excludeId && b.id === excludeId));
+
+  let minF = fechaInclusive;
+  aportes.forEach((a) => { if (a.fecha < minF) minF = a.fecha; });
+  bolsillos.forEach((b) => {
+    if (b.fechaInicio && b.fechaInicio < minF) minF = b.fechaInicio;
+    if (b.fechaFin && b.fechaFin < minF) minF = b.fechaFin;
+  });
+
+  // Mapas por fecha
+  const porFecha = {};
+  const ensure = (f) => {
+    if (!porFecha[f]) porFecha[f] = { aportes: [], inicios: [], fines: [] };
+  };
+
+  aportes.forEach((a) => {
+    if (a.fecha > fechaInclusive) return;
+    ensure(a.fecha);
+    porFecha[a.fecha].aportes.push(a);
+  });
+  bolsillos.forEach((b) => {
+    const cap = num(b.capital);
+    if (cap <= 0) return;
+    if (b.fechaInicio && b.fechaInicio <= fechaInclusive) {
+      ensure(b.fechaInicio);
+      porFecha[b.fechaInicio].inicios.push(b);
+    }
+    if (b.fechaFin && b.fechaFin <= fechaInclusive) {
+      ensure(b.fechaFin);
+      porFecha[b.fechaFin].fines.push(b);
+    }
+  });
+
+  let balance = 0;
+  let interesNetoAcum = 0;
+  let interesBrutoAcum = 0;
+  let retencionAcum = 0;
+  let interesHoy = { bruto: 0, retencion: 0, neto: 0, apertura: 0 };
+  const dias = [];
+
+  let cursor = minF;
+  // Si no hay eventos, no hay nada que simular
+  if (!Object.keys(porFecha).length && balance === 0) {
+    return empty;
+  }
+
+  while (cursor <= fechaInclusive) {
+    const apertura = balance;
+    const inter = interesDiarioCaja(apertura, cfg);
+    balance += inter.neto;
+    interesNetoAcum += inter.neto;
+    interesBrutoAcum += inter.bruto;
+    retencionAcum += inter.retencion;
+
+    const movs = [];
+    const day = porFecha[cursor];
+    if (day) {
+      day.aportes.forEach((a) => {
+        const m = num(a.monto);
+        balance += m;
+        movs.push({ tipo: 'aporte', monto: m, nombre: a.nota || 'Aporte' });
+      });
+      day.fines.forEach((b) => {
+        const fin = snapshotCDT(b, b.fechaFin);
+        balance += fin.totalFinal;
+        movs.push({ tipo: 'liberacion', monto: fin.totalFinal, nombre: (b.nombre || 'Inversión') + ' (vencimiento)', extra: fin.neto });
+      });
+      day.inicios.forEach((b) => {
+        const cap = num(b.capital);
+        balance -= cap;
+        movs.push({ tipo: 'inversion', monto: cap, nombre: b.nombre || 'Inversión' });
+      });
+    }
+
+    if (cursor === fechaInclusive) {
+      interesHoy = { ...inter, apertura };
+    }
+
+    if (inter.neto > 0.005 || movs.length) {
+      dias.push({
+        fecha: cursor,
+        apertura,
+        bruto: inter.bruto,
+        retencion: inter.retencion,
+        neto: inter.neto,
+        cierre: balance,
+        movs,
+      });
+    }
+
+    cursor = addDays(cursor, 1);
+    // safety: max ~40 years
+    if (dias.length > 15000) break;
+  }
+
+  const result = {
+    balance,
+    interesNetoAcum,
+    interesBrutoAcum,
+    retencionAcum,
+    interesHoy,
+    dias,
+  };
+  _simCacheKey = cacheKey;
+  _simCacheVal = result;
+  return result;
+}
+
+function disponibleEn(fecha, excludeId = null) {
+  return simularCaja(fecha, excludeId).balance;
+}
+
 function enCdtEn(fecha) {
   let s = 0;
   (esc()?.bolsillos || []).forEach((b) => {
@@ -130,14 +283,16 @@ function enCdtEn(fecha) {
   });
   return s;
 }
+
 function rendimientoEn(fecha) {
-  let s = 0;
+  let s = simularCaja(fecha).interesNetoAcum;
   (esc()?.bolsillos || []).forEach((b) => {
     const snap = snapshotCDT(b, fecha);
     if (snap.estado === 'activo' || snap.estado === 'vencido') s += snap.neto;
   });
   return s;
 }
+
 function patrimonioEn(fecha) {
   let pat = disponibleEn(fecha);
   (esc()?.bolsillos || []).forEach((b) => {
@@ -146,6 +301,7 @@ function patrimonioEn(fecha) {
   });
   return pat;
 }
+
 function detectarSobregiro() {
   const e = esc();
   if (!e) return null;
@@ -161,6 +317,7 @@ function detectarSobregiro() {
   }
   return null;
 }
+
 function syncPlazo(b, changed) {
   if (!b.fechaInicio) b.fechaInicio = fechaSim();
   if (changed === 'dias' || (changed === 'inicio' && b.modoPlazo === 'dias')) {
@@ -183,59 +340,62 @@ function syncPlazo(b, changed) {
   }
 }
 
-/** Genera movimientos del escenario activo */
+/** Movimientos + rendimientos diarios de caja del escenario activo */
 function generarMovimientos() {
   const e = esc();
   if (!e) return [];
+  const sim = simularCaja(fechaSim());
   const events = [];
 
-  (e.aportes || []).forEach((a) => {
-    if (!a.fecha) return;
-    events.push({
-      fecha: a.fecha,
-      tipo: 'aporte',
-      signo: '+',
-      monto: num(a.monto),
-      nombre: a.nota || 'Aporte',
-      refId: a.id,
-      orden: 0,
+  sim.dias.forEach((d) => {
+    if (d.neto > 0.005) {
+      events.push({
+        fecha: d.fecha,
+        tipo: 'rendimiento',
+        signo: '+',
+        monto: d.neto,
+        nombre: 'Rendimiento Disponible',
+        extra: d.retencion > 0.005
+          ? `bruto ${fmt(d.bruto)} · ret. −${fmt(d.retencion)}`
+          : `bruto ${fmt(d.bruto)} · sin retención`,
+        orden: -1,
+        saldo: null,
+      });
+    }
+    d.movs.forEach((m) => {
+      if (m.tipo === 'aporte') {
+        events.push({
+          fecha: d.fecha, tipo: 'aporte', signo: '+', monto: m.monto,
+          nombre: m.nombre, orden: 0, saldo: null,
+        });
+      } else if (m.tipo === 'liberacion') {
+        events.push({
+          fecha: d.fecha, tipo: 'liberacion', signo: '+', monto: m.monto,
+          nombre: m.nombre, orden: 0,
+          extra: m.extra != null ? `neto ${fmt(m.extra)}` : '',
+          saldo: null,
+        });
+      } else if (m.tipo === 'inversion') {
+        events.push({
+          fecha: d.fecha, tipo: 'inversion', signo: '−', monto: m.monto,
+          nombre: m.nombre, orden: 1, saldo: null,
+        });
+      }
     });
   });
-  (e.bolsillos || []).forEach((b) => {
-    if (b.fechaInicio && num(b.capital) > 0) {
-      events.push({
-        fecha: b.fechaInicio,
-        tipo: 'inversion',
-        signo: '−',
-        monto: num(b.capital),
-        nombre: b.nombre || 'CDT',
-        refId: b.id,
-        orden: 1,
-      });
-    }
-    if (b.fechaFin && num(b.capital) > 0) {
-      const fin = snapshotCDT(b, b.fechaFin);
-      events.push({
-        fecha: b.fechaFin,
-        tipo: 'liberacion',
-        signo: '+',
-        monto: fin.totalFinal,
-        nombre: (b.nombre || 'CDT') + ' (vencimiento)',
-        refId: b.id,
-        orden: 0,
-        extra: `neto ${fmt(fin.neto)}`,
-      });
-    }
-  });
 
-  events.sort((a, b) => {
+  // Saldo corrido usando el cierre diario del simulador
+  const cierrePorFecha = {};
+  sim.dias.forEach((d) => { cierrePorFecha[d.fecha] = d.cierre; });
+
+  let running = 0;
+  const sorted = events.sort((a, b) => {
     if (a.fecha !== b.fecha) return a.fecha.localeCompare(b.fecha);
     return a.orden - b.orden;
   });
 
-  // Disponible acumulado después de cada movimiento
-  let running = 0;
-  return events.map((ev) => {
+  // Recalcular saldo paso a paso
+  return sorted.map((ev) => {
     running += ev.signo === '+' ? ev.monto : -ev.monto;
     return { ...ev, saldo: running };
   });
@@ -243,6 +403,7 @@ function generarMovimientos() {
 
 /* ---------- persistencia ---------- */
 function guardar() {
+  invalidarSimCache();
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(estado)); }
   catch (err) { console.warn(err); }
 }
@@ -254,9 +415,27 @@ function cargar() {
       if (!estado.escenarios?.length) throw new Error('empty');
       if (!estado.activoId) estado.activoId = estado.escenarios[0].id;
       estado.escenarios.forEach((e) => {
-        if (!e.meta) e.meta = { fecha: '', monto: 0 };
         if (!e.aportes) e.aportes = [];
         if (!e.bolsillos) e.bolsillos = [];
+        if (!e.caja) e.caja = { tasa: 4, retencion: 7, umbral: 2881 };
+        else {
+          if (e.caja.tasa == null) e.caja.tasa = 4;
+          if (e.caja.retencion == null) e.caja.retencion = 7;
+          if (e.caja.umbral == null) e.caja.umbral = 2881;
+        }
+        // Migrar meta única → metas[]
+        if (!Array.isArray(e.metas)) {
+          e.metas = [];
+          if (e.meta && (e.meta.fecha || e.meta.monto)) {
+            e.metas.push({
+              id: uid(),
+              nombre: e.meta.nombre || 'Meta principal',
+              fecha: e.meta.fecha || '',
+              monto: num(e.meta.monto),
+            });
+          }
+          delete e.meta;
+        }
       });
       return;
     }
@@ -275,7 +454,7 @@ function cargar() {
           id: uid(), nombre: 'Escenario A',
           fechaSim: p.fechaSim || hoyISO(),
           aportes: p.aportes, bolsillos: p.bolsillos,
-          meta: { fecha: '', monto: 0 },
+          metas: [],
         };
       } else if (p.bolsillos) {
         const bolsillos = p.bolsillos;
@@ -284,7 +463,7 @@ function cargar() {
         e = {
           id: uid(), nombre: 'Escenario A', fechaSim: hoyISO(),
           aportes: [{ id: uid(), fecha: hoyISO(), monto: Math.max(base + inv, inv), nota: 'Capital inicial' }],
-          bolsillos, meta: { fecha: '', monto: 0 },
+          bolsillos, metas: [],
         };
       }
       if (e) {
@@ -301,7 +480,7 @@ function cargar() {
 }
 
 /* ---------- navegación (historial Android / botón atrás) ---------- */
-const VISTAS = ['home', 'nuevo', 'detalle', 'aporte', 'movimientos', 'escenarios'];
+const VISTAS = ['home', 'nuevo', 'detalle', 'aporte', 'aportes', 'inversiones', 'metas', 'meta', 'movimientos', 'escenarios'];
 let vistaActual = 'home';
 let navSilent = false;
 /** Pila propia: garantiza que "atrás" vuelva a la vista anterior y no cierre la app */
@@ -323,13 +502,18 @@ function refrescarVista(nombre) {
   if (nombre === 'home') renderHome();
   else if (nombre === 'movimientos') renderMovimientos();
   else if (nombre === 'escenarios') renderEscenarios();
-  else if (nombre === 'detalle') {
+  else if (nombre === 'aportes') renderAportesLista();
+  else if (nombre === 'inversiones') renderInversionesLista();
+  else if (nombre === 'metas') renderMetasLista();
+  else if (nombre === 'meta') {
+    if (metaEditId) abrirMeta(metaEditId, true);
+  } else if (nombre === 'detalle') {
     if (detalleId) renderDetalle();
     else { nombre = 'home'; renderHome(); }
   } else if (nombre === 'nuevo') {
     if (!nuevoDraft) { nombre = 'home'; renderHome(); }
   } else if (nombre === 'aporte') {
-    // inputs ya están en el DOM
+    if (aporteEditId) abrirAporte(aporteEditId, true);
   }
   return nombre;
 }
@@ -415,76 +599,21 @@ function initHistorial() {
 }
 
 /* ---------- instalación PWA ---------- */
-let deferredInstall = null;
 
-function initInstalar() {
-  const btn = document.getElementById('btn-instalar');
-  if (!btn) return;
-
-  const standalone = window.matchMedia('(display-mode: standalone)').matches
-    || window.navigator.standalone === true;
-
-  // En modo app ya instalada no mostrar el botón
-  if (standalone) {
-    btn.classList.add('hidden');
-  } else {
-    // Visible siempre para poder instalar o ver instrucciones
-    btn.classList.remove('hidden');
-  }
-
-  window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault();
-    deferredInstall = e;
-    if (!standalone) btn.classList.remove('hidden');
-  });
-
-  window.addEventListener('appinstalled', () => {
-    deferredInstall = null;
-    btn.classList.add('hidden');
-  });
-
-  btn.addEventListener('click', async () => {
-    if (deferredInstall) {
-      deferredInstall.prompt();
-      try { await deferredInstall.userChoice; } catch (e) { /* ignore */ }
-      deferredInstall = null;
-      btn.classList.add('hidden');
-      return;
-    }
-    const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
-    const isSecure = location.protocol === 'https:' || isLocal;
-    if (!isSecure) {
-      alert(
-        'Para INSTALAR en Android la página debe abrirse en:\n\n' +
-        '• http://localhost:PUERTO  (en este mismo teléfono con Termux)\n' +
-        '• o HTTPS\n\n' +
-        'Si entras por IP (ej. 192.168.x.x) con HTTP, Chrome bloquea la instalación.\n\n' +
-        'Pasos recomendados:\n' +
-        '1. En Termux: python -m http.server 8080 --bind 127.0.0.1\n' +
-        '2. En Chrome del teléfono: http://localhost:8080\n' +
-        '3. Menú ⋮ → "Instalar aplicación" / "Añadir a pantalla de inicio"'
-      );
-    } else {
-      alert(
-        'Para instalar:\n\n' +
-        'Chrome → menú ⋮ → "Instalar aplicación" o "Añadir a pantalla de inicio".\n\n' +
-        'Si no sale la opción, haz recarga forzada (⋮ → menú → recargar sin caché) y vuelve a intentar.'
-      );
-    }
-  });
-}
+/* install eliminado — espacio para login/perfil */
 
 /* ---------- HOME ---------- */
 function actualizarTotales() {
   const f = fechaSim();
-  const disp = disponibleEn(f);
+  const sim = simularCaja(f);
+  const disp = sim.balance;
   document.getElementById('total-disponible').textContent = fmt(disp);
   document.getElementById('total-en-cdt').textContent = fmt(enCdtEn(f));
   document.getElementById('total-rendimientos').textContent = fmt(rendimientoEn(f));
   document.getElementById('total-general').textContent = fmt(patrimonioEn(f));
   const e = esc();
-  document.getElementById('cdt-count').textContent = e?.bolsillos?.length || 0;
-  document.getElementById('aporte-count').textContent = e?.aportes?.length || 0;
+  const cc = document.getElementById('cdt-count'); if (cc) cc.textContent = e?.bolsillos?.length || 0;
+  const ac = document.getElementById('aporte-count'); if (ac) ac.textContent = e?.aportes?.length || 0;
   document.getElementById('escenario-nombre').textContent = e?.nombre || '—';
 
   const card = document.querySelector('.total-card.disponible');
@@ -498,93 +627,98 @@ function actualizarTotales() {
   } else warn.classList.add('hidden');
 
   renderMeta();
+  renderCaja(sim);
+}
+
+function renderCaja(sim) {
+  const e = esc();
+  const box = document.getElementById('caja-resumen');
+  if (!box || !e) return;
+  const cfg = cajaCfg(e);
+  const hoy = sim?.interesHoy || { bruto: 0, retencion: 0, neto: 0, apertura: 0 };
+  const retTxt = hoy.bruto > cfg.umbral
+    ? `Retención aplicada (−${fmt(hoy.retencion)})`
+    : (hoy.bruto > 0 ? 'Sin retención (bajo umbral)' : 'Sin rendimiento');
+  box.innerHTML = `
+    <div class="meta-line"><span>Tasa caja</span><strong>${cfg.tasa}% E.A.</strong></div>
+    <div class="meta-line"><span>Rend. neto del día</span><strong class="gold">${fmt(hoy.neto)}</strong></div>
+    <div class="meta-line"><span>Sobre saldo apertura</span><strong>${fmt(hoy.apertura)}</strong></div>
+    <div class="meta-line"><span>Acum. neto caja</span><strong>${fmt(sim?.interesNetoAcum || 0)}</strong></div>
+    <span class="meta-empty" style="display:block;margin-top:6px">${retTxt} · umbral ${fmt(cfg.umbral)}/día</span>
+  `;
 }
 
 function renderMeta() {
   const e = esc();
   const box = document.getElementById('meta-resumen');
-  if (!e?.meta?.fecha) {
-    box.innerHTML = '<span class="meta-empty">Sin meta definida. Toca Editar para fijar una fecha y monto objetivo.</span>';
+  if (!box) return;
+  const metas = e?.metas || [];
+  if (!metas.length) {
+    box.innerHTML = '<span class="meta-empty">Sin metas. Entra a Metas para crear la primera.</span>';
     return;
   }
-  const pat = patrimonioEn(e.meta.fecha);
-  const objetivo = num(e.meta.monto);
-  let extra = '';
-  if (objetivo > 0) {
-    const gap = pat - objetivo;
-    if (gap >= 0) extra = `<span class="meta-ok">Superas la meta por ${fmt(gap)}</span>`;
-    else extra = `<span class="meta-bad">Te faltan ${fmt(-gap)}</span>`;
-  }
-  box.innerHTML = `
-    <div class="meta-line"><span>Fecha</span><strong>${e.meta.fecha}</strong></div>
-    <div class="meta-line"><span>Patrimonio proyectado</span><strong class="gold">${fmt(pat)}</strong></div>
-    ${objetivo > 0 ? `<div class="meta-line"><span>Objetivo</span><strong>${fmt(objetivo)}</strong></div>` : ''}
-    ${extra}
-  `;
+  // Mostrar hasta 3 metas resumidas
+  const f = fechaSim();
+  const lines = metas.slice(0, 3).map((m) => {
+    if (!m.fecha) {
+      return `<div class="meta-line"><span>${escapeHtml(m.nombre || 'Meta')}</span><strong>—</strong></div>`;
+    }
+    const pat = patrimonioEn(m.fecha);
+    const obj = num(m.monto);
+    let tag = '';
+    if (obj > 0) {
+      const gap = pat - obj;
+      tag = gap >= 0 ? ' · ok' : ' · falta ' + fmtShort(-gap);
+    }
+    return `<div class="meta-line"><span>${escapeHtml(m.nombre || 'Meta')} (${m.fecha})</span><strong class="gold">${fmtShort(pat)}${tag}</strong></div>`;
+  }).join('');
+  const more = metas.length > 3 ? `<span class="meta-empty">${metas.length - 3} más…</span>` : '';
+  box.innerHTML = lines + more;
 }
 
 function renderHome() {
+  const inputF = document.getElementById('input-fecha-sim');
+  if (inputF && document.activeElement !== inputF) inputF.value = fechaSim();
+  actualizarTotales();
+}
+
+function renderInversionesLista() {
   const e = esc();
   const f = fechaSim();
   const lista = document.getElementById('lista-cdts');
+  if (!lista) return;
   lista.innerHTML = '';
 
   if (!e.bolsillos.length) {
     lista.innerHTML = '<p class="empty-msg">Sin inversiones en este escenario.</p>';
-  } else {
-    const sorted = [...e.bolsillos].sort((a, b) => {
-      const order = { activo: 0, sin_iniciar: 1, vencido: 2 };
-      return (order[snapshotCDT(a, f).estado] ?? 9) - (order[snapshotCDT(b, f).estado] ?? 9);
-    });
-    sorted.forEach((b) => {
-      const s = snapshotCDT(b, f);
-      const badge = s.estado === 'activo' ? 'Activo' : s.estado === 'vencido' ? 'Vencido' : 'Por iniciar';
-      const sub = s.estado === 'sin_iniciar' ? `Inicia ${b.fechaInicio}`
-        : s.estado === 'vencido' ? `Venció ${b.fechaFin}`
-        : `${Math.max(0, b.fechaFin ? daysBetween(f, b.fechaFin) : 0)} días rest.`;
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = `item-row estado-${s.estado}`;
-      row.innerHTML = `
-        <div class="item-left">
-          <span class="item-name">${escapeHtml(b.nombre)}</span>
-          <span class="item-meta"><span class="pill">${badge}</span> ${sub}</span>
-        </div>
-        <div class="item-right">
-          <span class="item-val">${fmtShort(s.estado === 'sin_iniciar' ? s.capital : s.total)}</span>
-          <span class="item-chevron">›</span>
-        </div>`;
-      row.addEventListener('click', () => abrirDetalle(b.id));
-      lista.appendChild(row);
-    });
+    return;
   }
 
-  const listaA = document.getElementById('lista-aportes');
-  listaA.innerHTML = '';
-  if (!e.aportes.length) {
-    listaA.innerHTML = '<p class="empty-msg">Sin aportes.</p>';
-  } else {
-    [...e.aportes].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || '')).forEach((a) => {
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'item-row';
-      row.innerHTML = `
-        <div class="item-left">
-          <span class="item-name">${escapeHtml(a.nota || 'Aporte')}</span>
-          <span class="item-meta">${a.fecha || '—'}</span>
-        </div>
-        <div class="item-right">
-          <span class="item-val">${fmtShort(num(a.monto))}</span>
-          <span class="item-chevron">›</span>
-        </div>`;
-      row.addEventListener('click', () => abrirAporte(a.id));
-      listaA.appendChild(row);
-    });
-  }
-
-  const inputF = document.getElementById('input-fecha-sim');
-  if (inputF && document.activeElement !== inputF) inputF.value = fechaSim();
-  actualizarTotales();
+  const sorted = [...e.bolsillos].sort((a, b) => {
+    const order = { activo: 0, sin_iniciar: 1, vencido: 2 };
+    return (order[snapshotCDT(a, f).estado] ?? 9) - (order[snapshotCDT(b, f).estado] ?? 9);
+  });
+  sorted.forEach((b) => {
+    const s = snapshotCDT(b, f);
+    const badge = s.estado === 'activo' ? 'Activa' : s.estado === 'vencido' ? 'Vencida' : 'Por iniciar';
+    const sub = s.estado === 'sin_iniciar' ? `Inicia ${b.fechaInicio}`
+      : s.estado === 'vencido' ? `Venció ${b.fechaFin}`
+      : `${Math.max(0, b.fechaFin ? daysBetween(f, b.fechaFin) : 0)} días rest.`;
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `item-row estado-${s.estado}`;
+    row.innerHTML = `
+      <div class="item-left">
+        <span class="item-name">${escapeHtml(b.nombre)}</span>
+        <span class="item-meta"><span class="pill">${badge}</span> ${sub}</span>
+      </div>
+      <div class="item-right">
+        <span class="item-val">${fmtShort(s.estado === 'sin_iniciar' ? s.capital : s.total)}</span>
+        <span class="item-chevron">›</span>
+      </div>`;
+    row.addEventListener('click', () => abrirDetalle(b.id));
+    lista.appendChild(row);
+  });
 }
 
 /* ---------- ESCENARIOS ---------- */
@@ -599,7 +733,7 @@ function renderEscenarios() {
       <button type="button" class="esc-select">
         <div class="item-left">
           <span class="item-name">${escapeHtml(e.nombre)}</span>
-          <span class="item-meta">${e.bolsillos.length} CDTs · ${e.aportes.length} aportes${activo ? ' · activo' : ''}</span>
+          <span class="item-meta">${e.bolsillos.length} inversiones · ${e.aportes.length} aportes${activo ? ' · activo' : ''}</span>
         </div>
         <span class="item-chevron">${activo ? '●' : '○'}</span>
       </button>
@@ -657,7 +791,7 @@ function renderMovimientos() {
   `).join('');
 }
 
-/* ---------- NUEVO CDT ---------- */
+/* ---------- NUEVA INVERSIÓN ---------- */
 function abrirNuevoCDT(prefill = null) {
   const baseFecha = prefill?.fechaInicio || fechaSim();
   nuevoDraft = {
@@ -669,7 +803,7 @@ function abrirNuevoCDT(prefill = null) {
     tasa: prefill?.tasa ?? 10.5,
     retencion: prefill?.retencion ?? 4,
     tipo: prefill?.tipo || 'simple',
-    nombre: prefill?.nombre || `CDT ${(esc()?.bolsillos?.length || 0) + 1}`,
+    nombre: prefill?.nombre || `Inversión ${(esc()?.bolsillos?.length || 0) + 1}`,
     reinversionDe: prefill?.reinversionDe || null,
   };
   document.getElementById('nuevo-titulo').textContent = prefill?.reinversionDe ? 'Reinvertir' : 'Nueva inversión';
@@ -736,7 +870,7 @@ function syncNuevoPlazoUI() {
 }
 
 function leerDraftPaso2() {
-  nuevoDraft.nombre = document.getElementById('nuevo-nombre').value.trim() || 'CDT';
+  nuevoDraft.nombre = document.getElementById('nuevo-nombre').value.trim() || 'Inversión';
   let capital = num(document.getElementById('nuevo-capital').value);
   const max = disponibleEn(nuevoDraft.fechaInicio);
   // Idea 5: tope automático
@@ -822,7 +956,7 @@ function abrirDetalle(id) {
 function renderDetalle() {
   const b = esc().bolsillos.find((x) => x.id === detalleId);
   if (!b) { mostrarVista('home'); renderHome(); return; }
-  document.getElementById('detalle-titulo').textContent = b.nombre || 'CDT';
+  document.getElementById('detalle-titulo').textContent = b.nombre || 'Inversión';
   const f = fechaSim();
   const s = snapshotCDT(b, f);
   const maxCap = disponibleEn(b.fechaInicio, b.id);
@@ -838,7 +972,7 @@ function renderDetalle() {
       <button type="button" class="btn-primary" id="btn-reinvertir" style="margin:14px 0 4px">
         Reinvertir ${fmtShort(s.totalFinal)}
       </button>
-      <p class="pat-hint">Crea un nuevo CDT con este capital liberado. Tú eliges desde qué fecha.</p>
+      <p class="pat-hint">Crea una nueva inversión con este capital liberado. Tú eliges desde qué fecha.</p>
     ` : ''}
 
     <div class="progress-wrap" style="margin:14px 0">
@@ -900,7 +1034,7 @@ function renderDetalle() {
         tipo: b.tipo,
         dias: b.dias || 90,
         modoPlazo: b.modoPlazo || 'dias',
-        nombre: (b.nombre || 'CDT') + ' (reinversión)',
+        nombre: (b.nombre || 'Inversión') + ' (reinversión)',
         reinversionDe: b.id,
       });
     });
@@ -939,7 +1073,7 @@ function renderDetalle() {
       } else if (field === 'fechaFin') syncPlazo(b, 'fin');
       else if (field === 'dias') syncPlazo(b, 'dias');
 
-      if (field === 'nombre') document.getElementById('detalle-titulo').textContent = b.nombre || 'CDT';
+      if (field === 'nombre') document.getElementById('detalle-titulo').textContent = b.nombre || 'Inversión';
       guardar();
       if (['fechaInicio', 'fechaFin', 'tipo', 'dias'].includes(field)) renderDetalle();
       else {
@@ -957,17 +1091,189 @@ function renderDetalle() {
   });
 }
 
+
+/* ---------- METAS ---------- */
+function renderMetasLista() {
+  const e = esc();
+  const lista = document.getElementById('lista-metas');
+  if (!lista) return;
+  lista.innerHTML = '';
+  const metas = [...(e?.metas || [])].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+  if (!metas.length) {
+    lista.innerHTML = '<p class="empty-msg">Sin metas. Crea la primera para proyectar tu patrimonio.</p>';
+    return;
+  }
+  metas.forEach((m) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'item-row';
+    let sub = m.fecha || 'Sin fecha';
+    let val = num(m.monto) > 0 ? fmtShort(num(m.monto)) : '—';
+    if (m.fecha) {
+      const pat = patrimonioEn(m.fecha);
+      const obj = num(m.monto);
+      if (obj > 0) {
+        const gap = pat - obj;
+        sub += gap >= 0 ? ' · superada' : ' · faltan ' + fmtShort(-gap);
+      } else {
+        sub += ' · proy. ' + fmtShort(pat);
+      }
+    }
+    row.innerHTML = `
+      <div class="item-left">
+        <span class="item-name">${escapeHtml(m.nombre || 'Meta')}</span>
+        <span class="item-meta">${sub}</span>
+      </div>
+      <div class="item-right">
+        <span class="item-val">${val}</span>
+        <span class="item-chevron">›</span>
+      </div>`;
+    row.addEventListener('click', () => abrirMeta(m.id));
+    lista.appendChild(row);
+  });
+}
+
+function abrirMeta(id = null, silent = false) {
+  metaEditId = id;
+  const m = id ? (esc().metas || []).find((x) => x.id === id) : null;
+  document.getElementById('meta-titulo').textContent = m ? (m.nombre || 'Meta') : 'Nueva meta';
+  document.getElementById('meta-nombre').value = m ? (m.nombre || '') : '';
+  document.getElementById('meta-fecha').value = m ? (m.fecha || '') : '';
+  document.getElementById('meta-monto').value = m ? (m.monto || 0) : 0;
+  document.getElementById('btn-eliminar-meta').classList.toggle('hidden', !m);
+
+  const montoEl = document.getElementById('meta-status-monto');
+  if (montoEl) montoEl.textContent = fmt(num(m ? m.monto : 0));
+  const pill = document.getElementById('meta-status-pill');
+  if (pill) pill.textContent = m ? 'Meta' : 'Nueva';
+
+  actualizarInfoMeta();
+
+  if (silent) aplicarVista('meta');
+  else mostrarVista('meta');
+}
+
+function actualizarInfoMeta() {
+  const info = document.getElementById('meta-info');
+  if (!info) return;
+  const fecha = document.getElementById('meta-fecha').value;
+  const monto = num(document.getElementById('meta-monto').value);
+  if (!fecha) {
+    info.innerHTML = '<p class="pat-hint">Elige una fecha objetivo para ver el patrimonio proyectado.</p>';
+    return;
+  }
+  const pat = patrimonioEn(fecha);
+  let extra = '';
+  if (monto > 0) {
+    const gap = pat - monto;
+    extra = gap >= 0
+      ? `<div class="result-item net"><span class="r-label">Resultado</span><span class="r-value">Superada por ${fmt(gap)}</span></div>`
+      : `<div class="result-item deduction"><span class="r-label">Resultado</span><span class="r-value">Faltan ${fmt(-gap)}</span></div>`;
+  }
+  info.innerHTML = `
+    <div class="result-item"><span class="r-label">Patrimonio proyectado</span><span class="r-value">${fmt(pat)}</span></div>
+    <div class="result-item"><span class="r-label">Objetivo</span><span class="r-value">${monto > 0 ? fmt(monto) : '—'}</span></div>
+    ${extra}
+  `;
+}
+
+function guardarMeta() {
+  const nombre = document.getElementById('meta-nombre').value.trim() || 'Meta';
+  const fecha = document.getElementById('meta-fecha').value || '';
+  const monto = num(document.getElementById('meta-monto').value);
+  const e = esc();
+  if (!e.metas) e.metas = [];
+  if (metaEditId) {
+    const m = e.metas.find((x) => x.id === metaEditId);
+    if (m) { m.nombre = nombre; m.fecha = fecha; m.monto = monto; }
+  } else {
+    e.metas.push({ id: uid(), nombre, fecha, monto });
+  }
+  guardar();
+  metaEditId = null;
+  renderMetasLista();
+  mostrarVista('metas', { replace: true });
+}
+
 /* ---------- APORTES ---------- */
-function abrirAporte(id = null) {
+function renderAportesLista() {
+  const e = esc();
+  const lista = document.getElementById('lista-aportes');
+  const sum = document.getElementById('aportes-summary');
+  if (!lista) return;
+
+  const aportes = [...(e?.aportes || [])].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+  const total = aportes.reduce((s, a) => s + num(a.monto), 0);
+  if (sum) {
+    sum.innerHTML = `
+      <div class="meta-line"><span>Cantidad de aportes</span><strong>${aportes.length}</strong></div>
+      <div class="meta-line"><span>Suma de capital aportado</span><strong class="gold">${fmt(total)}</strong></div>
+      <p class="pat-hint" style="margin-top:8px">Capital que has inyectado (sin contar rendimientos generados).</p>
+    `;
+  }
+
+  lista.innerHTML = '';
+  if (!aportes.length) {
+    lista.innerHTML = '<p class="empty-msg">Aún no hay aportes. Agrega el primero para tener Disponible.</p>';
+    return;
+  }
+
+  aportes.forEach((a) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'item-row';
+    const f = fechaSim();
+    const activo = a.fecha && a.fecha <= f;
+    row.innerHTML = `
+      <div class="item-left">
+        <span class="item-name">${escapeHtml(a.nota || 'Aporte')}</span>
+        <span class="item-meta">${a.fecha || '—'} · ${activo ? 'ya cuenta en Disponible' : 'fecha futura'}</span>
+      </div>
+      <div class="item-right">
+        <span class="item-val">${fmtShort(num(a.monto))}</span>
+        <span class="item-chevron">›</span>
+      </div>`;
+    row.addEventListener('click', () => abrirAporte(a.id));
+    lista.appendChild(row);
+  });
+}
+
+function abrirAporte(id = null, silent = false) {
   aporteEditId = id;
   const a = id ? esc().aportes.find((x) => x.id === id) : null;
-  document.getElementById('aporte-titulo').textContent = a ? 'Editar aporte' : 'Nuevo aporte';
+  document.getElementById('aporte-titulo').textContent = a ? (a.nota || 'Aporte') : 'Nuevo aporte';
   document.getElementById('aporte-fecha').value = a ? a.fecha : fechaSim();
   document.getElementById('aporte-monto').value = a ? a.monto : 0;
   document.getElementById('aporte-nota').value = a ? (a.nota || '') : '';
   document.getElementById('btn-eliminar-aporte').classList.toggle('hidden', !a);
-  mostrarVista('aporte');
+
+  const montoEl = document.getElementById('aporte-status-monto');
+  if (montoEl) montoEl.textContent = fmt(num(a ? a.monto : 0));
+  const pill = document.getElementById('aporte-status-pill');
+  if (pill) pill.textContent = a ? 'Aporte registrado' : 'Nuevo';
+
+  const info = document.getElementById('aporte-info');
+  if (info) {
+    if (a && a.fecha) {
+      const f = fechaSim();
+      const cuenta = a.fecha <= f;
+      info.innerHTML = `
+        <div class="result-item"><span class="r-label">Estado a la fecha de simulación</span>
+          <span class="r-value">${cuenta ? 'Incluido en Disponible' : 'Aún no cuenta (fecha futura)'}</span></div>
+        <div class="result-item"><span class="r-label">Monto</span>
+          <span class="r-value">${fmt(num(a.monto))}</span></div>
+        <div class="result-item"><span class="r-label">Fecha</span>
+          <span class="r-value">${a.fecha}</span></div>
+      `;
+    } else {
+      info.innerHTML = `<p class="pat-hint">Desde su fecha, este capital alimenta el Disponible y puede generar interés de caja día a día.</p>`;
+    }
+  }
+
+  if (silent) aplicarVista('aporte');
+  else mostrarVista('aporte');
 }
+
 function guardarAporte() {
   const fecha = document.getElementById('aporte-fecha').value || fechaSim();
   const monto = num(document.getElementById('aporte-monto').value);
@@ -980,8 +1286,8 @@ function guardarAporte() {
   }
   guardar();
   aporteEditId = null;
-  mostrarVista('home', { replace: true });
-  renderHome();
+  renderAportesLista();
+  mostrarVista('aportes', { replace: true });
 }
 
 /* ---------- eliminar ---------- */
@@ -992,11 +1298,16 @@ function pedirEliminar(type, id, nombre) {
 }
 function eliminarConfirmado() {
   if (!deleteTarget) return;
-  if (deleteTarget.type === 'cdt') {
+  const tipo = deleteTarget.type;
+  if (tipo === 'cdt') {
     esc().bolsillos = esc().bolsillos.filter((b) => b.id !== deleteTarget.id);
-  } else if (deleteTarget.type === 'aporte') {
+  } else if (tipo === 'aporte') {
     esc().aportes = esc().aportes.filter((a) => a.id !== deleteTarget.id);
-  } else if (deleteTarget.type === 'escenario') {
+    aporteEditId = null;
+  } else if (tipo === 'meta') {
+    esc().metas = (esc().metas || []).filter((m) => m.id !== deleteTarget.id);
+    metaEditId = null;
+  } else if (tipo === 'escenario') {
     estado.escenarios = estado.escenarios.filter((e) => e.id !== deleteTarget.id);
     if (!estado.escenarios.find((e) => e.id === estado.activoId)) {
       estado.activoId = estado.escenarios[0]?.id || null;
@@ -1005,8 +1316,18 @@ function eliminarConfirmado() {
   deleteTarget = null;
   document.getElementById('modal-delete').classList.add('hidden');
   guardar();
-  if (document.getElementById('view-escenarios') && !document.getElementById('view-escenarios').classList.contains('hidden')) {
+  if (tipo === 'escenario') {
     renderEscenarios();
+    mostrarVista('escenarios', { replace: true });
+  } else if (tipo === 'aporte') {
+    renderAportesLista();
+    mostrarVista('aportes', { replace: true });
+  } else if (tipo === 'meta') {
+    renderMetasLista();
+    mostrarVista('metas', { replace: true });
+  } else if (tipo === 'cdt') {
+    renderInversionesLista();
+    mostrarVista('inversiones', { replace: true });
   } else {
     mostrarVista('home');
     renderHome();
@@ -1017,11 +1338,15 @@ function eliminarConfirmado() {
 function init() {
   cargar();
   initHistorial();
-  initInstalar();
   renderHome();
   mostrarVista('home', { skipHistory: true });
 
   document.getElementById('btn-nuevo-cdt').addEventListener('click', () => abrirNuevoCDT());
+  document.getElementById('btn-ir-aportes').addEventListener('click', () => {
+    renderAportesLista();
+    mostrarVista('aportes');
+  });
+  document.getElementById('btn-volver-aportes').addEventListener('click', volverAtras);
   document.getElementById('btn-nuevo-aporte').addEventListener('click', () => abrirAporte(null));
   document.getElementById('btn-movimientos').addEventListener('click', () => {
     renderMovimientos();
@@ -1074,6 +1399,13 @@ function init() {
 
   document.getElementById('btn-volver-aporte').addEventListener('click', volverAtras);
   document.getElementById('btn-guardar-aporte').addEventListener('click', guardarAporte);
+  const aporteMontoInput = document.getElementById('aporte-monto');
+  if (aporteMontoInput) {
+    aporteMontoInput.addEventListener('input', () => {
+      const el = document.getElementById('aporte-status-monto');
+      if (el) el.textContent = fmt(num(aporteMontoInput.value));
+    });
+  }
   document.getElementById('btn-eliminar-aporte').addEventListener('click', () => {
     const a = esc().aportes.find((x) => x.id === aporteEditId);
     if (a) pedirEliminar('aporte', a.id, a.nota || 'Aporte');
@@ -1096,25 +1428,60 @@ function init() {
     actualizarTotales();
   });
 
-  // Meta
-  document.getElementById('btn-toggle-meta').addEventListener('click', () => {
-    const form = document.getElementById('meta-form');
+  // Metas (lista + detalle)
+  document.getElementById('btn-ir-metas').addEventListener('click', () => {
+    renderMetasLista();
+    mostrarVista('metas');
+  });
+  document.getElementById('btn-volver-metas').addEventListener('click', volverAtras);
+  document.getElementById('btn-nueva-meta').addEventListener('click', () => abrirMeta(null));
+  document.getElementById('btn-volver-meta').addEventListener('click', volverAtras);
+  document.getElementById('btn-guardar-meta').addEventListener('click', guardarMeta);
+  document.getElementById('btn-eliminar-meta').addEventListener('click', () => {
+    const m = (esc().metas || []).find((x) => x.id === metaEditId);
+    if (m) pedirEliminar('meta', m.id, m.nombre || 'Meta');
+  });
+  ['meta-fecha', 'meta-monto'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', actualizarInfoMeta);
+    if (el) el.addEventListener('change', actualizarInfoMeta);
+  });
+  const metaMonto = document.getElementById('meta-monto');
+  if (metaMonto) {
+    metaMonto.addEventListener('input', () => {
+      const el = document.getElementById('meta-status-monto');
+      if (el) el.textContent = fmt(num(metaMonto.value));
+    });
+  }
+
+  // Inversiones lista
+  document.getElementById('btn-ir-inversiones').addEventListener('click', () => {
+    renderInversionesLista();
+    mostrarVista('inversiones');
+  });
+  document.getElementById('btn-volver-inversiones').addEventListener('click', volverAtras);
+
+  document.getElementById('btn-toggle-caja').addEventListener('click', () => {
+    const form = document.getElementById('caja-form');
     const e = esc();
     form.classList.toggle('hidden');
     if (!form.classList.contains('hidden')) {
-      document.getElementById('meta-fecha').value = e.meta?.fecha || '';
-      document.getElementById('meta-monto').value = e.meta?.monto || '';
+      const cfg = cajaCfg(e);
+      document.getElementById('caja-tasa').value = cfg.tasa;
+      document.getElementById('caja-retencion').value = cfg.retencion;
+      document.getElementById('caja-umbral').value = cfg.umbral;
     }
   });
-  document.getElementById('btn-guardar-meta').addEventListener('click', () => {
+  document.getElementById('btn-guardar-caja').addEventListener('click', () => {
     const e = esc();
-    e.meta = {
-      fecha: document.getElementById('meta-fecha').value || '',
-      monto: num(document.getElementById('meta-monto').value),
+    e.caja = {
+      tasa: num(document.getElementById('caja-tasa').value, 4),
+      retencion: num(document.getElementById('caja-retencion').value, 7),
+      umbral: num(document.getElementById('caja-umbral').value, 2881),
     };
     guardar();
-    document.getElementById('meta-form').classList.add('hidden');
-    renderMeta();
+    document.getElementById('caja-form').classList.add('hidden');
+    renderHome();
   });
 }
 

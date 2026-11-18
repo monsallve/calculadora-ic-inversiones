@@ -1,5 +1,7 @@
-/* Vault service worker v13 */
-const CACHE_NAME = 'vault-v13';
+/* Monsallve Financiero SW v1
+const CACHE_NAME = 'monsallve-v1';
+
+// Rutas relativas al scope del SW (funcionan en subcarpeta de GitHub Pages)
 const ASSETS = [
   './',
   './index.html',
@@ -38,7 +40,6 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
 
   event.respondWith((async () => {
-    // Navegación: red primero, fallback a index cacheado
     if (req.mode === 'navigate') {
       try {
         const net = await fetch(req);
@@ -48,7 +49,8 @@ self.addEventListener('fetch', (event) => {
       } catch {
         return (await caches.match('./index.html'))
           || (await caches.match('./'))
-          || new Response('Sin conexión', { status: 503 });
+          || (await caches.match(req))
+          || new Response('Sin conexión', { status: 503, statusText: 'Offline' });
       }
     }
 

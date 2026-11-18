@@ -6,14 +6,14 @@
   <meta name="theme-color" content="#0a0a0a" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Vault" />
+  <meta name="apple-mobile-web-app-title" content="Monsallve" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="application-name" content="Vault" />
+  <meta name="application-name" content="Monsallve Financiero" />
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png" />
-  <title>Vault · CDT</title>
+  <title>Monsallve Financiero</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -28,10 +28,14 @@
         <div class="header-top">
           <div class="brand">
             <span class="brand-mark">◆</span>
-            <h1>Vault</h1>
+            <div class="brand-text">
+              <h1>Monsallve</h1>
+              <span class="brand-sub">Financiero</span>
+            </div>
           </div>
           <div class="header-actions">
-            <button type="button" class="btn-install hidden" id="btn-instalar" title="Instalar app">Instalar</button>
+            <button type="button" class="btn-icon hidden" id="btn-login" title="Iniciar sesión">👤</button>
+            <button type="button" class="btn-icon hidden" id="btn-perfil" title="Perfil">⚙️</button>
             <button type="button" class="btn-icon" id="btn-escenarios" title="Escenarios">⇄</button>
           </div>
         </div>
@@ -48,14 +52,41 @@
           </div>
         </div>
 
+        <div class="consulta-card caja-card">
+          <div class="meta-head">
+            <label class="pat-label">Disponible (caja)</label>
+            <button type="button" class="link-btn" id="btn-toggle-caja">Editar tasa</button>
+          </div>
+          <div id="caja-resumen" class="meta-resumen"></div>
+          <div id="caja-form" class="meta-form hidden">
+            <div class="field-group">
+              <div class="field">
+                <label>Tasa E.A. %</label>
+                <input type="number" inputmode="decimal" min="0" step="0.01" id="caja-tasa" />
+              </div>
+              <div class="field">
+                <label>Retención %</label>
+                <input type="number" inputmode="decimal" min="0" max="100" step="0.01" id="caja-retencion" />
+              </div>
+              <div class="field full">
+                <label>Umbral diario retención (COP)</label>
+                <input type="number" inputmode="decimal" min="0" step="1" id="caja-umbral" />
+              </div>
+            </div>
+            <p class="pat-hint">Retención solo si el rendimiento bruto del día supera el umbral (≈ 0,055 UVT = $2.881).</p>
+            <button type="button" class="btn-primary" id="btn-guardar-caja">Guardar</button>
+          </div>
+        </div>
+
         <div class="totals">
           <div class="total-card disponible">
             <span class="label">Disponible</span>
             <span class="value" id="total-disponible">$0</span>
           </div>
           <div class="total-card en-cdt">
-            <span class="label">En CDTs</span>
+            <span class="label">En inversiones</span>
             <span class="value" id="total-en-cdt">$0</span>
+            <button type="button" class="card-link" id="btn-ir-inversiones">Ver inversiones ›</button>
           </div>
           <div class="total-card yields">
             <span class="label">Rend. neto</span>
@@ -64,57 +95,82 @@
           <div class="total-card grand">
             <span class="label">Patrimonio</span>
             <span class="value" id="total-general">$0</span>
+            <button type="button" class="card-link" id="btn-ir-aportes">Aportes de capital ›</button>
           </div>
         </div>
         <p id="sim-warning" class="sim-warning hidden"></p>
 
-        <!-- Meta -->
-        <div class="meta-card" id="meta-card">
+        <div class="meta-card" id="meta-card-home">
           <div class="meta-head">
-            <label class="pat-label">Meta</label>
-            <button type="button" class="link-btn" id="btn-toggle-meta">Editar</button>
+            <label class="pat-label">Metas</label>
+            <button type="button" class="link-btn" id="btn-ir-metas">Ver todas ›</button>
           </div>
           <div id="meta-resumen" class="meta-resumen"></div>
-          <div id="meta-form" class="meta-form hidden">
-            <div class="field-group">
-              <div class="field">
-                <label>Fecha meta</label>
-                <input type="date" id="meta-fecha" />
-              </div>
-              <div class="field">
-                <label>Monto objetivo</label>
-                <input type="number" inputmode="decimal" min="0" step="any" id="meta-monto" placeholder="Opcional" />
-              </div>
-            </div>
-            <button type="button" class="btn-primary" id="btn-guardar-meta">Guardar meta</button>
-          </div>
         </div>
       </header>
 
       <main class="main">
-        <div class="section-title">
-          <h2>1 · Aportes de capital</h2>
-          <span id="aporte-count" class="badge">0</span>
-        </div>
-        <p class="hist-hint">Paso inicial: sin aportes no hay Disponible para invertir.</p>
-        <div id="lista-aportes" class="lista-compacta"></div>
-        <button id="btn-nuevo-aporte" class="btn-add" type="button">
-          <span class="btn-plus">+</span><span>Agregar capital</span>
-        </button>
-
-        <div class="section-title" style="margin-top:28px">
-          <h2>2 · CDTs</h2>
-          <span id="cdt-count" class="badge">0</span>
-        </div>
-        <div id="lista-cdts" class="lista-compacta"></div>
-        <button id="btn-nuevo-cdt" class="btn-add btn-add-sm" type="button">
-          <span class="btn-plus">+</span><span>Nueva inversión</span>
-        </button>
-
-        <div class="home-actions" style="margin-top:24px">
+        <div class="home-actions">
           <button type="button" class="btn-secondary" id="btn-movimientos">Ver movimientos</button>
         </div>
       </main>
+    </section>
+
+    <!-- LISTA INVERSIONES -->
+    <section id="view-inversiones" class="view hidden">
+      <header class="view-nav">
+        <button type="button" class="btn-back" id="btn-volver-inversiones">←</button>
+        <h2>Inversiones</h2>
+        <span class="nav-spacer"></span>
+      </header>
+      <p class="wizard-lead">Todas tus inversiones del escenario activo. Toca una para ver el detalle y editarla.</p>
+      <div id="lista-cdts" class="lista-compacta"></div>
+      <button id="btn-nuevo-cdt" class="btn-add" type="button">
+        <span class="btn-plus">+</span><span>Nueva inversión</span>
+      </button>
+    </section>
+
+    <!-- LISTA METAS -->
+    <section id="view-metas" class="view hidden">
+      <header class="view-nav">
+        <button type="button" class="btn-back" id="btn-volver-metas">←</button>
+        <h2>Metas</h2>
+        <span class="nav-spacer"></span>
+      </header>
+      <p class="wizard-lead">Define varias metas con fecha y monto. El patrimonio proyectado se calcula a esa fecha.</p>
+      <div id="lista-metas" class="lista-compacta"></div>
+      <button id="btn-nueva-meta" class="btn-add" type="button">
+        <span class="btn-plus">+</span><span>Nueva meta</span>
+      </button>
+    </section>
+
+    <!-- DETALLE META -->
+    <section id="view-meta" class="view hidden">
+      <header class="view-nav">
+        <button type="button" class="btn-back" id="btn-volver-meta">←</button>
+        <h2 id="meta-titulo">Meta</h2>
+        <button type="button" class="btn-nav-danger hidden" id="btn-eliminar-meta">✕</button>
+      </header>
+      <div class="wizard">
+        <div class="detalle-status">
+          <span class="pill" id="meta-status-pill">Meta</span>
+          <span class="detalle-status-val" id="meta-status-monto">$0</span>
+        </div>
+        <div class="field full">
+          <label>Nombre</label>
+          <input type="text" id="meta-nombre" maxlength="40" placeholder="Ej. Casa, viaje, libertad…" />
+        </div>
+        <div class="field full">
+          <label>Fecha objetivo</label>
+          <input type="date" id="meta-fecha" />
+        </div>
+        <div class="field full">
+          <label>Monto objetivo</label>
+          <input type="number" inputmode="decimal" min="0" step="any" id="meta-monto" />
+        </div>
+        <div class="result-box" id="meta-info" style="margin-top:12px"></div>
+        <button type="button" class="btn-primary" id="btn-guardar-meta">Guardar meta</button>
+      </div>
     </section>
 
     <!-- ESCENARIOS -->
@@ -124,7 +180,7 @@
         <h2>Escenarios</h2>
         <span class="nav-spacer"></span>
       </header>
-      <p class="wizard-lead">Cada escenario es una simulación independiente, con sus CDTs, aportes y movimientos.</p>
+      <p class="wizard-lead">Cada escenario es una simulación independiente (aportes, inversiones, metas y movimientos).</p>
       <div id="lista-escenarios" class="lista-compacta"></div>
       <button type="button" class="btn-add" id="btn-crear-escenario">
         <span class="btn-plus">+</span><span>Nuevo escenario</span>
@@ -142,7 +198,7 @@
       <div id="lista-movimientos" class="mov-lista"></div>
     </section>
 
-    <!-- NUEVO CDT -->
+    <!-- NUEVA INVERSIÓN -->
     <section id="view-nuevo" class="view hidden">
       <header class="view-nav">
         <button type="button" class="btn-back" id="btn-cancel-nuevo">←</button>
@@ -164,7 +220,7 @@
           <button type="button" class="btn-primary" id="btn-nuevo-siguiente" disabled>Continuar</button>
         </div>
         <div class="wizard-step hidden" data-step="2">
-          <p class="wizard-lead">Capital máximo = disponible del día de inicio (se ajusta solo si te pasas).</p>
+          <p class="wizard-lead">El capital no puede superar el disponible del día de inicio (se ajusta solo si te pasas).</p>
           <div class="field full">
             <label>Nombre</label>
             <input type="text" id="nuevo-nombre" maxlength="40" />
@@ -212,23 +268,38 @@
           <p id="nuevo-error-2" class="form-error hidden"></p>
           <div class="wizard-actions">
             <button type="button" class="btn-secondary" id="btn-nuevo-atras">Atrás</button>
-            <button type="button" class="btn-primary" id="btn-nuevo-crear">Crear CDT</button>
+            <button type="button" class="btn-primary" id="btn-nuevo-crear">Crear inversión</button>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- DETALLE -->
+    <!-- DETALLE INVERSIÓN -->
     <section id="view-detalle" class="view hidden">
       <header class="view-nav">
         <button type="button" class="btn-back" id="btn-volver-detalle">←</button>
-        <h2 id="detalle-titulo">Detalle</h2>
+        <h2 id="detalle-titulo">Inversión</h2>
         <button type="button" class="btn-nav-danger" id="btn-eliminar-detalle">✕</button>
       </header>
       <div id="detalle-body" class="detalle-body"></div>
     </section>
 
-    <!-- APORTE -->
+    <!-- LISTA APORTES -->
+    <section id="view-aportes" class="view hidden">
+      <header class="view-nav">
+        <button type="button" class="btn-back" id="btn-volver-aportes">←</button>
+        <h2>Aportes</h2>
+        <span class="nav-spacer"></span>
+      </header>
+      <p class="wizard-lead">Capital que entra a tu simulación. Cada aporte suma al Disponible desde su fecha.</p>
+      <div class="aportes-summary" id="aportes-summary"></div>
+      <div id="lista-aportes" class="lista-compacta"></div>
+      <button id="btn-nuevo-aporte" class="btn-add" type="button">
+        <span class="btn-plus">+</span><span>Nuevo aporte</span>
+      </button>
+    </section>
+
+    <!-- DETALLE APORTE -->
     <section id="view-aporte" class="view hidden">
       <header class="view-nav">
         <button type="button" class="btn-back" id="btn-volver-aporte">←</button>
@@ -236,8 +307,12 @@
         <button type="button" class="btn-nav-danger hidden" id="btn-eliminar-aporte">✕</button>
       </header>
       <div class="wizard">
+        <div class="detalle-status" id="aporte-status-box">
+          <span class="pill" id="aporte-status-pill">Aporte</span>
+          <span class="detalle-status-val" id="aporte-status-monto">$0</span>
+        </div>
         <div class="field full">
-          <label>Fecha</label>
+          <label>Fecha del aporte</label>
           <input type="date" id="aporte-fecha" />
         </div>
         <div class="field full">
@@ -245,15 +320,16 @@
           <input type="number" inputmode="decimal" min="0" step="any" id="aporte-monto" />
         </div>
         <div class="field full">
-          <label>Nota</label>
-          <input type="text" id="aporte-nota" maxlength="40" />
+          <label>Nota / origen</label>
+          <input type="text" id="aporte-nota" maxlength="40" placeholder="Ej. salario, bono, ahorro…" />
         </div>
+        <div class="result-box" id="aporte-info" style="margin-top:12px"></div>
         <button type="button" class="btn-primary" id="btn-guardar-aporte">Guardar</button>
       </div>
     </section>
 
     <footer class="footer" id="footer-home">
-      <p>Cada escenario guarda su propia simulación</p>
+      <p>Monsallve Financiero · simulación en este dispositivo</p>
     </footer>
   </div>
 
@@ -269,16 +345,14 @@
   </div>
 
   <script src="js/app.js"></script>
-<script>
+  <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', async () => {
         try {
           const reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });
-          // Forzar actualización del SW en cada carga
           reg.update().catch(() => {});
-          console.log('SW ok', reg.scope);
         } catch (err) {
-          console.warn('SW no registrado (¿HTTP en IP local?). La app funciona igual.', err);
+          console.warn('SW no registrado', err);
         }
       });
     }
