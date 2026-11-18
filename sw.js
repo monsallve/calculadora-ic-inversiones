@@ -1,11 +1,12 @@
 /* Monsallve Financiero SW v4 */
-const CACHE_NAME = 'monsallve-v5';
+const CACHE_NAME = 'monsallve-v7';
 
 const ASSETS = [
   './',
   './index.html',
   './css/styles.css',
   './js/app.js',
+  './js/i18n.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',

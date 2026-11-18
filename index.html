@@ -34,6 +34,11 @@
             </div>
           </div>
           <div class="header-actions">
+
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button type="button" class="lang-btn" data-lang="es">ES</button>
+          <button type="button" class="lang-btn" data-lang="en">EN</button>
+        </div>
             <button type="button" class="btn-icon" id="btn-cuenta" title="Mi cuenta">👤</button>
             <button type="button" class="btn-icon" id="btn-escenarios" title="Escenarios">⇄</button>
           </div>
@@ -49,15 +54,15 @@
 
         <div class="consulta-card sim-card">
           <div class="consulta-header">
-            <label class="pat-label">Fecha de simulación</label>
+            <label class="pat-label" data-i18n="label_sim_date">Fecha de simulación</label>
             <input type="date" id="input-fecha-sim" />
           </div>
         </div>
 
         <div class="consulta-card caja-card">
           <div class="meta-head">
-            <label class="pat-label">Disponible (caja)</label>
-            <button type="button" class="link-btn" id="btn-toggle-caja">Editar tasa</button>
+            <label class="pat-label" data-i18n="label_caja">Disponible (caja)</label>
+            <button type="button" class="link-btn" id="btn-toggle-caja" data-i18n="btn_edit_rate">Editar tasa</button>
           </div>
           <div id="caja-resumen" class="meta-resumen"></div>
           <div id="caja-form" class="meta-form hidden">
@@ -82,30 +87,30 @@
 
         <div class="totals">
           <div class="total-card disponible">
-            <span class="label">Disponible</span>
+            <span class="label" data-i18n="home_disponible">Disponible</span>
             <span class="value" id="total-disponible">$0</span>
           </div>
           <div class="total-card en-cdt">
-            <span class="label">En inversiones</span>
+            <span class="label" data-i18n="home_inversiones">En inversiones</span>
             <span class="value" id="total-en-cdt">$0</span>
-            <button type="button" class="card-link" id="btn-ir-inversiones">Ver inversiones ›</button>
+            <button type="button" class="card-link" id="btn-ir-inversiones" data-i18n="link_inversiones">Ver inversiones ›</button>
           </div>
           <div class="total-card yields">
-            <span class="label">Rend. neto</span>
+            <span class="label" data-i18n="home_rend">Rend. neto</span>
             <span class="value" id="total-rendimientos">$0</span>
           </div>
           <div class="total-card grand">
-            <span class="label">Patrimonio</span>
+            <span class="label" data-i18n="home_patrimonio">Patrimonio</span>
             <span class="value" id="total-general">$0</span>
-            <button type="button" class="card-link" id="btn-ir-aportes">Aportes de capital ›</button>
+            <button type="button" class="card-link" id="btn-ir-aportes" data-i18n="link_aportes">Aportes de capital ›</button>
           </div>
         </div>
         <p id="sim-warning" class="sim-warning hidden"></p>
 
         <div class="meta-card" id="meta-card-home">
           <div class="meta-head">
-            <label class="pat-label">Metas</label>
-            <button type="button" class="link-btn" id="btn-ir-metas">Ver todas ›</button>
+            <label class="pat-label" data-i18n="label_metas">Metas</label>
+            <button type="button" class="link-btn" id="btn-ir-metas" data-i18n="link_metas">Ver todas ›</button>
           </div>
           <div id="meta-resumen" class="meta-resumen"></div>
         </div>
@@ -114,20 +119,20 @@
       <main class="main">
         <div class="home-nav-grid">
           <button type="button" class="home-nav-btn" id="btn-nav-aportes">
-            <span class="hn-title">Aportes</span>
-            <span class="hn-sub">Capital que entra</span>
+            <span class="hn-title" data-i18n="nav_aportes">Aportes</span>
+            <span class="hn-sub" data-i18n="nav_aportes_sub">Capital que entra</span>
           </button>
           <button type="button" class="home-nav-btn" id="btn-nav-inversiones">
-            <span class="hn-title">Inversiones</span>
-            <span class="hn-sub">CDTs y plazos</span>
+            <span class="hn-title" data-i18n="nav_inv">Inversiones</span>
+            <span class="hn-sub" data-i18n="nav_inv_sub">Plazos y rentabilidades</span>
           </button>
           <button type="button" class="home-nav-btn" id="btn-nav-metas">
-            <span class="hn-title">Metas</span>
-            <span class="hn-sub">Objetivos</span>
+            <span class="hn-title" data-i18n="nav_metas">Metas</span>
+            <span class="hn-sub" data-i18n="nav_metas_sub">Objetivos</span>
           </button>
           <button type="button" class="home-nav-btn" id="btn-movimientos">
-            <span class="hn-title">Movimientos</span>
-            <span class="hn-sub">Línea de tiempo</span>
+            <span class="hn-title" data-i18n="nav_mov">Movimientos</span>
+            <span class="hn-sub" data-i18n="nav_mov_sub">Línea de tiempo</span>
           </button>
         </div>
       </main>
@@ -199,62 +204,88 @@
           <h1>Monsallve</h1>
           <span class="brand-sub">Financiero</span>
         </div>
-        <p class="gate-lead">Inicia sesión para acceder a tu patrimonio e inversiones.</p>
+        <p class="gate-lead" data-i18n="gate_lead">Inicia sesión para acceder a tu patrimonio e inversiones.</p>
 
         <div class="auth-tabs" id="auth-tabs">
-          <button type="button" class="auth-tab active" data-tab="login">Entrar</button>
-          <button type="button" class="auth-tab" data-tab="registro">Registrarse</button>
+          <button type="button" class="auth-tab active" data-tab="login" data-i18n="tab_login">Entrar</button>
+          <button type="button" class="auth-tab" data-tab="registro" data-i18n="tab_register">Registrarse</button>
         </div>
 
         <div id="auth-panel-login" class="gate-panel">
           <div class="field full">
-            <label>Correo</label>
-            <input type="email" id="login-email" autocomplete="username" placeholder="tu@correo.com" />
+            <label data-i18n="label_email">Correo</label>
+            <input type="email" id="login-email" autocomplete="username" placeholder="tu@correo.com" data-i18n-placeholder="ph_email" />
           </div>
           <div class="field full">
-            <label>Contraseña</label>
+            <label data-i18n="label_password">Contraseña</label>
             <div class="pass-wrap">
-              <input type="password" id="login-password" autocomplete="current-password" placeholder="Tu contraseña" />
+              <input type="password" id="login-password" autocomplete="current-password" placeholder="Tu contraseña" data-i18n-placeholder="ph_password" />
               <button type="button" class="btn-eye" data-target="login-password" aria-label="Ver contraseña">👁</button>
             </div>
           </div>
           <p class="form-error hidden" id="login-error"></p>
-          <button type="button" class="btn-primary" id="btn-do-login">Entrar</button>
-          <button type="button" class="btn-linkish" id="btn-forgot-password">¿Olvidaste tu contraseña?</button>
+          <button type="button" class="btn-primary" id="btn-do-login" data-i18n="btn_login">Entrar</button>
+          <button type="button" class="btn-linkish" id="btn-forgot-password" data-i18n="btn_forgot">¿Olvidaste tu contraseña?</button>
         </div>
 
         <div id="auth-panel-registro" class="gate-panel hidden">
           <div class="field full">
-            <label>Nombre de usuario</label>
-            <input type="text" id="reg-username" maxlength="24" autocomplete="username" placeholder="Ej. juanperez" />
+            <label data-i18n="label_username">Nombre de usuario</label>
+            <input type="text" id="reg-username" maxlength="24" autocomplete="username" placeholder="Ej. juanperez" data-i18n-placeholder="ph_username" />
           </div>
           <div class="field full">
-            <label>Correo</label>
-            <input type="email" id="reg-email" autocomplete="email" placeholder="tu@correo.com" />
+            <label data-i18n="label_email">Correo</label>
+            <input type="email" id="reg-email" autocomplete="email" placeholder="tu@correo.com" data-i18n-placeholder="ph_email" />
           </div>
           <div class="field full">
-            <label>Contraseña</label>
+            <label data-i18n="label_password">Contraseña</label>
             <div class="pass-wrap">
-              <input type="password" id="reg-password" autocomplete="new-password" placeholder="Mínimo 6 caracteres" />
+              <input type="password" id="reg-password" autocomplete="new-password" placeholder="Mínimo 6 caracteres" data-i18n-placeholder="ph_password_min" />
               <button type="button" class="btn-eye" data-target="reg-password" aria-label="Ver contraseña">👁</button>
             </div>
           </div>
           <div class="field full">
-            <label>Repetir contraseña</label>
+            <label data-i18n="label_password2">Repetir contraseña</label>
             <div class="pass-wrap">
-              <input type="password" id="reg-password2" autocomplete="new-password" placeholder="Repite la contraseña" />
+              <input type="password" id="reg-password2" autocomplete="new-password" placeholder="Repite la contraseña" data-i18n-placeholder="ph_password_repeat" />
               <button type="button" class="btn-eye" data-target="reg-password2" aria-label="Ver contraseña">👁</button>
             </div>
           </div>
           <p class="form-error hidden" id="reg-error"></p>
-          <button type="button" class="btn-primary" id="btn-do-registro">Crear cuenta</button>
+          <button type="button" class="btn-primary" id="btn-do-registro" data-i18n="btn_register">Crear cuenta</button>
         </div>
 
-        <div class="gate-divider"><span>o</span></div>
+        <div class="gate-divider"><span data-i18n="or">o</span></div>
         <button type="button" class="btn-google" id="btn-google-login">
-          <span class="g-icon">G</span> Continuar con Google
+          <span class="g-icon">G</span> <span data-i18n="btn_google"></span>
         </button>
         <p class="pat-hint" id="firebase-config-hint" style="margin-top:14px"></p>
+        <div class="lang-switch" style="justify-content:center;margin-top:18px">
+          <button type="button" class="lang-btn" data-lang="es">ES</button>
+          <button type="button" class="lang-btn" data-lang="en">EN</button>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- VERIFICACIÓN DE CORREO -->
+    <section id="view-verify" class="view hidden">
+      <div class="gate-wrap">
+        <div class="gate-brand">
+          <span class="brand-mark">◆</span>
+          <h1>Monsallve</h1>
+        </div>
+        <h2 data-i18n="verify_title" style="text-align:center;margin:12px 0 8px">Verifica tu correo</h2>
+        <p class="gate-lead" data-i18n="verify_lead">Te enviamos un enlace de verificación. Ábrelo desde tu correo y luego pulsa Continuar.</p>
+        <p class="pat-hint" id="verify-email-show" style="text-align:center"></p>
+        <p class="form-error hidden" id="verify-error"></p>
+        <button type="button" class="btn-primary" id="btn-verify-continue" data-i18n="verify_continue">Ya verifiqué — Continuar</button>
+        <button type="button" class="btn-secondary" id="btn-verify-resend" data-i18n="verify_resend" style="margin-top:10px">Reenviar correo de verificación</button>
+        <button type="button" class="btn-linkish" id="btn-verify-logout" data-i18n="verify_logout">Usar otra cuenta</button>
+        <div class="lang-switch" style="justify-content:center;margin-top:20px">
+          <button type="button" class="lang-btn" data-lang="es">ES</button>
+          <button type="button" class="lang-btn" data-lang="en">EN</button>
+        </div>
       </div>
     </section>
 
@@ -262,7 +293,7 @@
     <section id="view-cuenta" class="view hidden">
       <header class="view-nav">
         <button type="button" class="btn-back" id="btn-volver-cuenta">←</button>
-        <h2>Mi cuenta</h2>
+        <h2 data-i18n="cuenta_title">Mi cuenta</h2>
         <span class="nav-spacer"></span>
       </header>
       <div class="wizard">
@@ -273,21 +304,21 @@
         <div class="result-box" id="cuenta-sync-info" style="margin-bottom:14px"></div>
 
         <div class="field full">
-          <label>Nombre de usuario</label>
+          <label data-i18n="label_username">Nombre de usuario</label>
           <input type="text" id="perfil-username" maxlength="24" />
         </div>
         <p class="form-error hidden" id="perfil-user-error"></p>
-        <button type="button" class="btn-primary" id="btn-guardar-username">Guardar nombre de usuario</button>
+        <button type="button" class="btn-primary" id="btn-guardar-username" data-i18n="btn_save_username">Guardar nombre de usuario</button>
 
         <div class="field full" style="margin-top:18px">
-          <label>Correo</label>
+          <label data-i18n="label_email">Correo</label>
           <input type="email" id="cuenta-email" disabled />
         </div>
         <p class="pat-hint">Para cambiar la contraseña te enviamos un enlace de confirmación al correo.</p>
-        <button type="button" class="btn-secondary" id="btn-reset-password">Enviar enlace para cambiar contraseña</button>
+        <button type="button" class="btn-secondary" id="btn-reset-password" data-i18n="btn_reset_pass">Enviar enlace para cambiar contraseña</button>
         <p class="form-error hidden" id="perfil-pass-msg"></p>
 
-        <button type="button" class="btn-secondary" id="btn-cerrar-sesion" style="margin-top:20px">Cerrar sesión</button>
+        <button type="button" class="btn-secondary" id="btn-cerrar-sesion" style="margin-top:20px" data-i18n="btn_logout">Cerrar sesión</button>
       </div>
     </section>
 
@@ -487,6 +518,7 @@
       measurementId: "G-74GZ0FJREB"
     };
   </script>
+  <script src="js/i18n.js"></script>
   <script src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

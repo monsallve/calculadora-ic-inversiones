@@ -1,15 +1,14 @@
 # Firebase — Monsallve Financiero
 
 ## Authorized domains
-Authentication → Settings → Authorized domains:
 - monsallve.github.io
-- localhost (para pruebas)
+- localhost
 
 ## Sign-in methods
 - Email/Password: ON
-- Google: ON (añade email de soporte del proyecto)
+- Google: ON
 
-## Firestore rules (publicar estas)
+## Firestore rules (PUBLICAR)
 
 ```
 rules_version = '2';
@@ -19,7 +18,9 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
     match /usernames/{uname} {
-      allow read: if request.auth != null;
+      // Lectura pública para comprobar disponibilidad al registrarse
+      allow get: if true;
+      allow list: if false;
       allow create: if request.auth != null
         && request.resource.data.uid == request.auth.uid;
       allow delete: if request.auth != null
@@ -29,7 +30,3 @@ service cloud.firestore {
   }
 }
 ```
-
-## Colecciones
-- users/{uid} → username, email, estado, updatedAt
-- usernames/{username} → uid (unicidad)

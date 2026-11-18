@@ -507,7 +507,7 @@ function cargar() {
 }
 
 /* ---------- navegación (historial Android / botón atrás) ---------- */
-const VISTAS = ['gate', 'home', 'nuevo', 'detalle', 'aporte', 'aportes', 'inversiones', 'metas', 'meta', 'movimientos', 'escenarios', 'cuenta'];
+const VISTAS = ['gate', 'verify', 'home', 'nuevo', 'detalle', 'aporte', 'aportes', 'inversiones', 'metas', 'meta', 'movimientos', 'escenarios', 'cuenta'];
 let vistaActual = 'home';
 let navSilent = false;
 /** Pila propia: garantiza que "atrás" vuelva a la vista anterior y no cierre la app */
@@ -554,16 +554,16 @@ function mostrarVista(nombre, opts = {}) {
   if (!VISTAS.includes(nombre)) nombre = 'home';
   // Sin sesión solo se permite el gate
   if (!usuario && nombre !== 'gate') nombre = 'gate';
+  if (usuario && necesitaVerificarEmail(usuario) && nombre !== 'verify' && nombre !== 'gate') nombre = 'verify';
   if (opts.skipHistory || navSilent) {
     aplicarVista(nombre);
     return;
   }
   try {
-    if (opts.replace || nombre === 'home') {
-      // Al volver a home, reiniciar pila: el siguiente "atrás" puede salir de la app
-      navStack = ['home'];
-      history.replaceState({ vista: 'home', stack: ['home'] }, '', '#home');
-      aplicarVista('home');
+    if (opts.replace || nombre === 'home' || nombre === 'gate') {
+      navStack = [nombre];
+      history.replaceState({ vista: nombre, stack: [nombre] }, '', '#' + nombre);
+      aplicarVista(nombre);
       return;
     }
     // Evitar duplicar la misma vista encima de sí misma
@@ -1396,6 +1396,7 @@ function initFirebase() {
     if (!firebase.apps.length) firebase.initializeApp(window.FIREBASE_CONFIG);
     fbAuth = firebase.auth();
     fbDb = firebase.firestore();
+    try { fbDb.enableNetwork(); } catch (e) {}
     firebaseListo = true;
     if (hint) hint.textContent = '';
     return true;
@@ -1444,14 +1445,54 @@ function normalizarUsername(u) {
     .replace(/[^a-z0-9._-]/g, '');
 }
 
+function withTimeout(promise, ms, msg) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(msg || 'Tiempo agotado')), ms);
+    promise.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
+  });
+}
+
 async function usernameDisponible(username, exceptUid) {
   const key = normalizarUsername(username);
   if (key.length < 3) return { ok: false, msg: 'Mínimo 3 caracteres (letras, números, . _ -)' };
   if (key.length > 24) return { ok: false, msg: 'Máximo 24 caracteres' };
-  const snap = await fbDb.collection('usernames').doc(key).get();
-  if (!snap.exists) return { ok: true, key };
-  if (exceptUid && snap.data().uid === exceptUid) return { ok: true, key };
-  return { ok: false, msg: 'Ese nombre de usuario ya está en uso' };
+  if (!fbDb) return { ok: false, msg: 'Base de datos no disponible' };
+  try {
+    // Forzar red; evita error "client is offline" con caché stale
+    try { await fbDb.enableNetwork(); } catch (e) { /* ignore */ }
+    const ref = fbDb.collection('usernames').doc(key);
+    let snap;
+    try {
+      snap = await withTimeout(ref.get({ source: 'server' }), 10000, 'Sin conexión al servidor');
+    } catch (e1) {
+      // Fallback caché / default
+      try {
+        snap = await withTimeout(ref.get(), 8000, 'Sin conexión');
+      } catch (e2) {
+        return {
+          ok: false,
+          msg: 'No hay conexión con Firebase. Revisa internet y las reglas de Firestore (usernames allow get).',
+        };
+      }
+    }
+    if (!snap.exists) return { ok: true, key };
+    const data = snap.data() || {};
+    if (exceptUid && data.uid === exceptUid) return { ok: true, key };
+    return { ok: false, msg: 'Ese nombre de usuario ya está en uso' };
+  } catch (err) {
+    console.error('usernameDisponible', err);
+    const m = (err && err.message) || '';
+    if (/offline/i.test(m)) {
+      return { ok: false, msg: 'Sin conexión. Activa internet e inténtalo de nuevo.' };
+    }
+    if (/permission|insufficient/i.test(m)) {
+      return { ok: false, msg: 'Permiso denegado. Publica las reglas de usernames en Firestore.' };
+    }
+    return { ok: false, msg: m || 'No se pudo comprobar el usuario' };
+  }
 }
 
 async function reservarUsername(username, uid) {
@@ -1473,269 +1514,33 @@ async function liberarUsername(usernameKey) {
 }
 
 async function cargarPerfil(uid) {
-  const snap = await fbDb.collection('users').doc(uid).get();
+  const snap = await withTimeout(
+    fbDb.collection('users').doc(uid).get(),
+    12000,
+    'Tiempo agotado al leer tu perfil'
+  );
   if (snap.exists) {
     const d = snap.data() || {};
     perfilUsuario = {
       username: d.username || '',
       email: d.email || (usuario && usuario.email) || '',
     };
-    if (d.estado) normalizarEstado(d.estado);
+    if (d.estado && typeof d.estado === 'object') {
+      try { normalizarEstado(d.estado); } catch (e) { console.warn('estado inválido', e); }
+    }
     return d;
   }
   perfilUsuario = { username: '', email: (usuario && usuario.email) || '' };
   return null;
 }
 
-function renderCuenta() {
-  if (!usuario) {
-    mostrarVista('gate', { replace: true });
-    return;
-  }
-  const un = perfilUsuario?.username || '';
-  document.getElementById('cuenta-username').textContent = un ? '@' + un : 'Sin usuario';
-  document.getElementById('perfil-username').value = un;
-  document.getElementById('cuenta-email').value = usuario.email || '';
-  const info = document.getElementById('cuenta-sync-info');
-  if (info) {
-    info.innerHTML = `
-      <div class="result-item"><span class="r-label">Correo</span><span class="r-value">${usuario.email || '—'}</span></div>
-      <div class="result-item"><span class="r-label">Sincronización</span><span class="r-value">${
-        syncStatus === 'synced' ? 'Al día' : syncStatus === 'syncing' ? 'Guardando…' : syncStatus === 'error' ? 'Error' : '—'
-      }</span></div>`;
-  }
-  actualizarAuthChip();
-}
 
-function mostrarErrorAuth(id, err) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  const map = {
-    'auth/email-already-in-use': 'Ese correo ya tiene cuenta. Prueba entrar.',
-    'auth/invalid-email': 'Correo no válido.',
-    'auth/weak-password': 'La contraseña debe tener al menos 6 caracteres.',
-    'auth/user-not-found': 'No hay cuenta con ese correo.',
-    'auth/wrong-password': 'Contraseña incorrecta.',
-    'auth/invalid-credential': 'Correo o contraseña incorrectos.',
-    'auth/too-many-requests': 'Demasiados intentos. Espera un momento.',
-    'auth/network-request-failed': 'Sin conexión. Revisa internet.',
-    'auth/operation-not-allowed': 'Método no activo en Firebase Console.',
-    'auth/unauthorized-domain': 'Agrega monsallve.github.io en Authorized domains.',
-    'auth/popup-closed-by-user': 'Ventana de Google cerrada.',
-    'auth/cancelled-popup-request': 'Popup cancelado.',
-  };
-  const code = err && err.code;
-  el.textContent = (err && err.message && !code) ? err.message : (map[code] || (err && err.message) || 'Error');
-  el.classList.remove('hidden');
-}
-
-async function doLogin() {
-  const email = document.getElementById('login-email').value.trim();
-  const pass = document.getElementById('login-password').value;
-  const errBox = document.getElementById('login-error');
-  errBox.classList.add('hidden');
-  if (!firebaseListo) {
-    errBox.textContent = 'Firebase no listo. Recarga la página.';
-    errBox.classList.remove('hidden');
-    return;
-  }
-  setAuthLoading(true, 'Entrando…');
-  try {
-    await fbAuth.signInWithEmailAndPassword(email, pass);
-  } catch (err) {
-    setAuthLoading(false);
-    mostrarErrorAuth('login-error', err);
-  }
-}
-
-async function doRegistro() {
-  const username = document.getElementById('reg-username').value;
-  const email = document.getElementById('reg-email').value.trim();
-  const pass = document.getElementById('reg-password').value;
-  const pass2 = document.getElementById('reg-password2').value;
-  const errBox = document.getElementById('reg-error');
-  errBox.classList.add('hidden');
-  if (pass !== pass2) {
-    errBox.textContent = 'Las contraseñas no coinciden.';
-    errBox.classList.remove('hidden');
-    return;
-  }
-  if (!firebaseListo) {
-    errBox.textContent = 'Firebase no listo.';
-    errBox.classList.remove('hidden');
-    return;
-  }
-  setAuthLoading(true, 'Creando cuenta…');
-  try {
-    const check = await usernameDisponible(username);
-    if (!check.ok) throw new Error(check.msg);
-
-    const cred = await fbAuth.createUserWithEmailAndPassword(email, pass);
-    const uid = cred.user.uid;
-    const uname = await reservarUsername(username, uid);
-
-    // Estado inicial limpio para cuenta nueva
+function asegurarEstadoMinimo() {
+  if (!estado || !Array.isArray(estado.escenarios) || !estado.escenarios.length) {
     const e = nuevoEscenario('Escenario A');
     estado = { activoId: e.id, escenarios: [e] };
-    perfilUsuario = { username: uname, email };
-
-    await fbDb.collection('users').doc(uid).set({
-      username: uname,
-      email,
-      estado,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    guardarLocal();
-    // onAuthStateChanged completará la entrada
-  } catch (err) {
-    setAuthLoading(false);
-    mostrarErrorAuth('reg-error', err);
-    // Si se creó auth pero falló username, intentar limpiar es complejo; el user puede reintentar login
   }
-}
-
-async function doGoogle() {
-  if (!firebaseListo) return;
-  setAuthLoading(true, 'Conectando con Google…');
-  try {
-    const provider = new firebase.auth.GoogleAuthProvider();
-    const cred = await fbAuth.signInWithPopup(provider);
-    const uid = cred.user.uid;
-    const snap = await fbDb.collection('users').doc(uid).get();
-    if (!snap.exists || !snap.data().username) {
-      // Pedir username único
-      setAuthLoading(false);
-      let uname = '';
-      for (let i = 0; i < 5; i++) {
-        uname = prompt('Elige un nombre de usuario único (mín. 3 caracteres):', normalizarUsername(cred.user.displayName || ''));
-        if (uname == null) {
-          await fbAuth.signOut();
-          return;
-        }
-        const check = await usernameDisponible(uname);
-        if (check.ok) {
-          uname = await reservarUsername(uname, uid);
-          const e = nuevoEscenario('Escenario A');
-          estado = { activoId: e.id, escenarios: [e] };
-          await fbDb.collection('users').doc(uid).set({
-            username: uname,
-            email: cred.user.email || null,
-            estado,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
-          perfilUsuario = { username: uname, email: cred.user.email || '' };
-          break;
-        }
-        alert(check.msg);
-        if (i === 4) {
-          await fbAuth.signOut();
-          return;
-        }
-      }
-    }
-  } catch (err) {
-    setAuthLoading(false);
-    const box = document.getElementById('login-error');
-    if (box) {
-      box.classList.remove('hidden');
-      mostrarErrorAuth('login-error', err);
-    } else {
-      alert(err.message || 'Error con Google');
-    }
-  }
-}
-
-async function doLogout() {
-  setAuthLoading(true, 'Cerrando sesión…');
-  try {
-    if (fbAuth) await fbAuth.signOut();
-  } catch (err) {
-    console.warn(err);
-  }
-  setAuthLoading(false);
-}
-
-async function guardarUsernamePerfil() {
-  const errBox = document.getElementById('perfil-user-error');
-  errBox.classList.add('hidden');
-  if (!usuario || !fbDb) return;
-  const nuevo = document.getElementById('perfil-username').value;
-  setAuthLoading(true, 'Guardando usuario…');
-  try {
-    const check = await usernameDisponible(nuevo, usuario.uid);
-    if (!check.ok) throw new Error(check.msg);
-    const old = perfilUsuario?.username || '';
-    if (normalizarUsername(old) !== check.key) {
-      await reservarUsername(nuevo, usuario.uid);
-      if (old) await liberarUsername(normalizarUsername(old));
-    }
-    await fbDb.collection('users').doc(usuario.uid).set({
-      username: check.key,
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
-    perfilUsuario = { ...(perfilUsuario || {}), username: check.key };
-    renderCuenta();
-    actualizarAuthChip();
-  } catch (err) {
-    errBox.textContent = err.message || 'No se pudo guardar';
-    errBox.classList.remove('hidden');
-  }
-  setAuthLoading(false);
-}
-
-async function enviarResetPassword() {
-  const msg = document.getElementById('perfil-pass-msg');
-  msg.classList.add('hidden');
-  const email = usuario?.email || document.getElementById('login-email')?.value?.trim();
-  if (!email) {
-    msg.textContent = 'No hay correo disponible.';
-    msg.classList.remove('hidden');
-    return;
-  }
-  setAuthLoading(true, 'Enviando correo…');
-  try {
-    await fbAuth.sendPasswordResetEmail(email);
-    msg.textContent = 'Te enviamos un enlace a ' + email + '. Revisa tu bandeja (y spam).';
-    msg.classList.remove('hidden');
-    msg.style.color = 'var(--gold)';
-  } catch (err) {
-    msg.style.color = '';
-    mostrarErrorAuth('perfil-pass-msg', err);
-  }
-  setAuthLoading(false);
-}
-
-async function forgotFromGate() {
-  const email = document.getElementById('login-email').value.trim();
-  const errBox = document.getElementById('login-error');
-  errBox.classList.add('hidden');
-  if (!email) {
-    errBox.textContent = 'Escribe tu correo arriba y pulsa de nuevo.';
-    errBox.classList.remove('hidden');
-    return;
-  }
-  setAuthLoading(true, 'Enviando correo…');
-  try {
-    await fbAuth.sendPasswordResetEmail(email);
-    errBox.textContent = 'Enlace enviado a ' + email;
-    errBox.classList.remove('hidden');
-    errBox.style.color = 'var(--gold)';
-  } catch (err) {
-    errBox.style.color = '';
-    mostrarErrorAuth('login-error', err);
-  }
-  setAuthLoading(false);
-}
-
-function toggleEye(btn) {
-  const id = btn.getAttribute('data-target');
-  const input = document.getElementById(id);
-  if (!input) return;
-  const show = input.type === 'password';
-  input.type = show ? 'text' : 'password';
-  btn.textContent = show ? '🙈' : '👁';
+  if (!estado.activoId) estado.activoId = estado.escenarios[0].id;
 }
 
 async function guardarNube() {
@@ -1743,13 +1548,18 @@ async function guardarNube() {
   try {
     syncStatus = 'syncing';
     actualizarAuthChip();
+    asegurarEstadoMinimo();
     const payload = {
       estado,
       email: usuario.email || null,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
-    if (perfilUsuario?.username) payload.username = perfilUsuario.username;
-    await fbDb.collection('users').doc(usuario.uid).set(payload, { merge: true });
+    if (perfilUsuario && perfilUsuario.username) payload.username = perfilUsuario.username;
+    await withTimeout(
+      fbDb.collection('users').doc(usuario.uid).set(payload, { merge: true }),
+      12000,
+      'Tiempo agotado al guardar'
+    );
     syncStatus = 'synced';
     actualizarAuthChip();
   } catch (err) {
@@ -1764,41 +1574,147 @@ async function cargarDesdeNube() {
   try {
     const data = await cargarPerfil(usuario.uid);
     if (data && data.estado) {
+      asegurarEstadoMinimo();
       guardarLocal();
       syncStatus = 'synced';
       return true;
     }
-    // Usuario sin estado aún
-    if (!estado.escenarios?.length) {
-      const e = nuevoEscenario('Escenario A');
-      estado = { activoId: e.id, escenarios: [e] };
-    }
-    await guardarNube();
+    // Usuario autenticado sin documento o sin estado
+    asegurarEstadoMinimo();
+    // Intentar crear doc; si falla por reglas, seguimos con estado local
+    try { await guardarNube(); } catch (e) { console.warn(e); }
     return false;
   } catch (err) {
     console.error('cargarDesdeNube', err);
     syncStatus = 'error';
+    // Fallback: datos locales del dispositivo
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) normalizarEstado(JSON.parse(raw));
+    } catch (e) { /* ignore */ }
+    asegurarEstadoMinimo();
     return false;
   }
 }
 
-function escucharAuth() {
-  if (!fbAuth) return;
-  fbAuth.onAuthStateChanged(async (user) => {
-    usuario = user;
-    if (user) {
-      setAuthLoading(true, 'Cargando tu cuenta…');
+function necesitaVerificarEmail(user) {
+  if (!user) return false;
+  // Google y proveedores externos suelen venir verificados
+  const provider = (user.providerData && user.providerData[0] && user.providerData[0].providerId) || '';
+  if (provider === 'google.com') return false;
+  return user.emailVerified === false;
+}
+
+function renderVerify() {
+  const el = document.getElementById('verify-email-show');
+  if (el && usuario) el.textContent = usuario.email || '';
+  const err = document.getElementById('verify-error');
+  if (err) err.classList.add('hidden');
+  if (typeof applyI18n === 'function') applyI18n();
+}
+
+/** Entrar a la app tras auth; siempre quita el loading */
+async function entrarAppTrasAuth() {
+  setAuthLoading(true, (typeof t === 'function' ? t('loading_account') : 'Cargando tu cuenta…'));
+  try {
+    // Refrescar flags de verificación
+    try { await usuario.reload(); } catch (e) { /* ignore */ }
+    if (necesitaVerificarEmail(usuario)) {
+      setAuthLoading(false);
+      renderVerify();
+      mostrarVista('verify', { replace: true });
+      return;
+    }
+    await cargarDesdeNube();
+  } catch (e) {
+    console.error('entrarAppTrasAuth', e);
+    asegurarEstadoMinimo();
+  } finally {
+    if (usuario && !necesitaVerificarEmail(usuario)) {
       try {
-        await cargarDesdeNube();
         invalidarSimCache();
-        setAuthLoading(false);
+        actualizarAuthChip();
         mostrarVista('home', { replace: true });
         renderHome();
-        actualizarAuthChip();
+      } catch (e2) {
+        console.error(e2);
+      }
+    }
+    setAuthLoading(false);
+  }
+}
+
+async function resendVerification() {
+  const err = document.getElementById('verify-error');
+  if (err) err.classList.add('hidden');
+  if (!usuario) return;
+  setAuthLoading(true, typeof t === 'function' ? t('loading_mail') : 'Enviando…');
+  try {
+    await usuario.sendEmailVerification();
+    if (err) {
+      err.textContent = (currentLang === 'en')
+        ? 'Email sent. Check inbox and spam.'
+        : 'Correo enviado. Revisa bandeja y spam.';
+      err.classList.remove('hidden');
+      err.style.color = 'var(--gold)';
+    }
+  } catch (e) {
+    if (err) {
+      err.style.color = '';
+      err.textContent = e.message || 'Error';
+      err.classList.remove('hidden');
+    }
+  }
+  setAuthLoading(false);
+}
+
+async function continueAfterVerify() {
+  if (!usuario) return;
+  setAuthLoading(true, typeof t === 'function' ? t('loading_account') : '…');
+  try {
+    await usuario.reload();
+    if (necesitaVerificarEmail(usuario)) {
+      const err = document.getElementById('verify-error');
+      if (err) {
+        err.style.color = '';
+        err.textContent = (currentLang === 'en')
+          ? 'Email not verified yet. Open the link we sent you.'
+          : 'Aún no está verificado. Abre el enlace que te enviamos.';
+        err.classList.remove('hidden');
+      }
+      setAuthLoading(false);
+      return;
+    }
+    await cargarDesdeNube();
+    invalidarSimCache();
+    mostrarVista('home', { replace: true });
+    renderHome();
+    actualizarAuthChip();
+  } catch (e) {
+    console.error(e);
+  }
+  setAuthLoading(false);
+}
+
+function escucharAuth() {
+  if (!fbAuth) return;
+  // Evitar condiciones de carrera si onAuthStateChanged dispara dos veces
+  let gen = 0;
+  fbAuth.onAuthStateChanged(async (user) => {
+    const my = ++gen;
+    usuario = user;
+    if (user) {
+      try {
+        await entrarAppTrasAuth();
       } catch (e) {
         console.error(e);
         setAuthLoading(false);
+        asegurarEstadoMinimo();
+        mostrarVista('home', { replace: true });
+        try { renderHome(); } catch (e2) {}
       }
+      // Si llegó otro evento más nuevo, no pisar
+      if (my !== gen) return;
     } else {
       perfilUsuario = null;
       syncStatus = 'local';
@@ -1825,12 +1741,35 @@ function init() {
   initHistorial();
   // Sin sesión no se muestra la app: solo el gate
   mostrarVista('gate', { skipHistory: true });
-  if (firebaseListo) escucharAuth();
-  else {
+  if (firebaseListo) {
+    escucharAuth();
+    // Red de seguridad: nunca dejar la pantalla colgada
+    setTimeout(() => {
+      const el = document.getElementById('auth-loading');
+      if (el && !el.classList.contains('hidden')) {
+        console.warn('Auth loading timeout — forzando UI');
+        setAuthLoading(false);
+        if (usuario) {
+          asegurarEstadoMinimo();
+          mostrarVista('home', { replace: true });
+          try { renderHome(); } catch (e) {}
+        } else {
+          mostrarVista('gate', { replace: true });
+        }
+      }
+    }, 15000);
+  } else {
     const hint = document.getElementById('firebase-config-hint');
     if (hint) hint.textContent = 'No se pudo iniciar Firebase.';
+    setAuthLoading(false);
   }
   actualizarAuthChip();
+  if (typeof applyI18n === 'function') applyI18n();
+  document.querySelectorAll('.lang-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (typeof setLang === 'function') setLang(btn.getAttribute('data-lang'));
+    });
+  });
 
   document.getElementById('btn-nuevo-cdt').addEventListener('click', () => abrirNuevoCDT());
   document.getElementById('btn-ir-aportes').addEventListener('click', () => {
@@ -1997,6 +1936,9 @@ function init() {
   on('btn-guardar-username', 'click', guardarUsernamePerfil);
   on('btn-reset-password', 'click', enviarResetPassword);
   on('btn-forgot-password', 'click', forgotFromGate);
+  on('btn-verify-resend', 'click', resendVerification);
+  on('btn-verify-continue', 'click', continueAfterVerify);
+  on('btn-verify-logout', 'click', doLogout);
   document.querySelectorAll('.btn-eye').forEach((btn) => {
     btn.addEventListener('click', () => toggleEye(btn));
   });

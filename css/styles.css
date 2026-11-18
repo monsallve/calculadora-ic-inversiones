@@ -1470,3 +1470,26 @@ body {
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.lang-switch {
+  display: inline-flex;
+  gap: 4px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.lang-btn {
+  min-width: 36px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.lang-btn.active {
+  border-color: var(--gold);
+  color: var(--gold);
+}
