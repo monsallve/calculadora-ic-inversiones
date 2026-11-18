@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable security primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidUsername(uname) {
+      return uname is string && uname.size() >= 3 && uname.size() <= 24 && uname.matches('^[a-z0-9._-]+$');
+    }
+
+    function isValidEstado(estado) {
+      return estado is map
+        && estado.keys().hasAll(['activoId', 'escenarios'])
+        && estado.keys().hasOnly(['activoId', 'escenarios'])
+        && estado.activoId is string
+        && estado.activoId.size() >= 1
+        && estado.activoId.size() <= 128
+        && estado.escenarios is list
+        && estado.escenarios.size() >= 1
+        && estado.escenarios.size() <= 30
+        && estado.escenarios[0] is map;
+    }
+
+    function isValidUserDoc(data) {
+      return data.keys().hasAll(['estado', 'updatedAt'])
+        && data.keys().hasOnly(['estado', 'email', 'username', 'updatedAt'])
+        && isValidEstado(data.estado)
+        && data.updatedAt == request.time
+        && (!('email' in data) || data.email == null || (data.email is string && data.email.size() <= 320))
+        && (!('username' in data) || data.username == '' || isValidUsername(data.username));
+    }
+
+    function isValidUsernameDoc(data, uname) {
+      return data.keys().hasAll(['uid', 'username', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'username', 'createdAt'])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && isValidUsername(data.username)
+        && data.username == uname
+        && data.createdAt == request.time;
+    }
+
+    // Private per-user profile & financial simulation state
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserDoc(incoming());
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserDoc(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['estado', 'email', 'username', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // Globally unique username claims (single-doc lookup only, zero listing)
+    match /usernames/{uname} {
+      allow get: if isValidUsername(uname);
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidUsername(uname)
+        && isValidUsernameDoc(incoming(), uname);
+      allow update: if false;
+      allow delete: if isVerifiedUser()
+        && isValidUsername(uname)
+        && existing().uid == request.auth.uid;
+    }
+  }
+}
