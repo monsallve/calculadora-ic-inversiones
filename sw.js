@@ -1,7 +1,6 @@
-/* Monsallve Financiero SW v1
-const CACHE_NAME = 'monsallve-v1';
+/* Monsallve Financiero SW v2 */
+const CACHE_NAME = 'monsallve-v2';
 
-// Rutas relativas al scope del SW (funcionan en subcarpeta de GitHub Pages)
 const ASSETS = [
   './',
   './index.html',

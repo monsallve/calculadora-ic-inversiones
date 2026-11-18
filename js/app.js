@@ -1335,7 +1335,17 @@ function eliminarConfirmado() {
 }
 
 /* ---------- init ---------- */
+function on(id, ev, fn) {
+  const el = document.getElementById(id);
+  if (!el) {
+    console.warn('Elemento no encontrado:', id);
+    return;
+  }
+  el.addEventListener(ev, fn);
+}
+
 function init() {
+  try {
   cargar();
   initHistorial();
   renderHome();
@@ -1472,7 +1482,7 @@ function init() {
       document.getElementById('caja-umbral').value = cfg.umbral;
     }
   });
-  document.getElementById('btn-guardar-caja').addEventListener('click', () => {
+  on('btn-guardar-caja', 'click', () => {
     const e = esc();
     e.caja = {
       tasa: num(document.getElementById('caja-tasa').value, 4),
@@ -1483,6 +1493,16 @@ function init() {
     document.getElementById('caja-form').classList.add('hidden');
     renderHome();
   });
+
+  // Atajos de navegación del inicio
+  on('btn-nav-aportes', 'click', () => { renderAportesLista(); mostrarVista('aportes'); });
+  on('btn-nav-inversiones', 'click', () => { renderInversionesLista(); mostrarVista('inversiones'); });
+  on('btn-nav-metas', 'click', () => { renderMetasLista(); mostrarVista('metas'); });
+
+  } catch (err) {
+    console.error('Error al iniciar Monsallve Financiero:', err);
+    alert('Error al cargar la app: ' + (err && err.message ? err.message : err));
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);
