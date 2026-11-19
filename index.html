@@ -34,26 +34,17 @@
             <span class="brand-mark">◆</span>
             <div class="brand-text">
               <h1>Monsallve</h1>
-              <span class="brand-sub">Financiero</span>
+              <span class="brand-sub" data-i18n="app_sub">Financiero</span>
             </div>
           </div>
-          <div class="header-actions">
-
-        <div class="lang-switch" role="group" aria-label="Language">
-          <button type="button" class="lang-btn" data-lang="es">ES</button>
-          <button type="button" class="lang-btn" data-lang="en">EN</button>
-        </div>
-            <button type="button" class="btn-icon" id="btn-cuenta" title="Mi cuenta">👤</button>
-            <button type="button" class="btn-icon" id="btn-escenarios" title="Escenarios">⇄</button>
+          <div class="header-top-right">
+            <button type="button" class="header-esc-btn" id="btn-escenarios" title="Escenarios" data-i18n-title="btn_scenarios_title">
+              <span class="esc-ico" aria-hidden="true">⇄</span>
+              <span class="chip-name" id="escenario-nombre">A</span>
+            </button>
+            <span class="header-username" id="auth-chip-text">—</span>
+            <button type="button" class="btn-icon" id="btn-cuenta" title="Mi cuenta" data-i18n-title="cuenta_title">👤</button>
           </div>
-          <div class="auth-chip" id="auth-chip">
-            <span class="auth-chip-text" id="auth-chip-text">—</span>
-          </div>
-        </div>
-
-        <div class="escenario-chip" id="escenario-chip">
-          <span class="chip-label">Escenario</span>
-          <span class="chip-name" id="escenario-nombre">A</span>
         </div>
 
         <div class="consulta-card sim-card">
@@ -61,6 +52,27 @@
             <label class="pat-label" data-i18n="label_sim_date">Fecha de simulación</label>
             <input type="date" id="input-fecha-sim" />
           </div>
+          <div class="sim-quick-actions">
+            <button type="button" class="quick-tx-btn ingreso" id="btn-add-ingreso">
+              <span class="qtx-sign">+</span>
+              <span data-i18n="btn_add_income">Ingreso</span>
+            </button>
+            <button type="button" class="quick-tx-btn gasto" id="btn-add-gasto">
+              <span class="qtx-sign">−</span>
+              <span data-i18n="btn_add_expense">Gasto</span>
+            </button>
+          </div>
+          <div class="sim-yields-30d">
+            <button type="button" class="yield-30d-btn" id="btn-rend-prev30" aria-expanded="false">
+              <span class="y30-label" data-i18n="btn_rend_prev30">30 días antes</span>
+              <span class="y30-val" id="rend-prev30-val">$0</span>
+            </button>
+            <button type="button" class="yield-30d-btn" id="btn-rend-next30" aria-expanded="false">
+              <span class="y30-label" data-i18n="btn_rend_next30">Próximos 30 días</span>
+              <span class="y30-val" id="rend-next30-val">$0</span>
+            </button>
+          </div>
+          <div id="rend-30d-panel" class="rend-30d-panel hidden"></div>
         </div>
 
         <div class="consulta-card caja-card">
@@ -94,51 +106,40 @@
             <span class="label" data-i18n="home_disponible">Disponible</span>
             <span class="value" id="total-disponible">$0</span>
           </div>
-          <div class="total-card en-cdt">
+          <div class="total-card en-cdt total-card-link" id="card-ir-inversiones" role="button" tabindex="0">
             <span class="label" data-i18n="home_inversiones">En inversiones</span>
             <span class="value" id="total-en-cdt">$0</span>
-            <button type="button" class="card-link" id="btn-ir-inversiones" data-i18n="link_inversiones">Ver inversiones ›</button>
+            <span class="card-link" id="btn-ir-inversiones" data-i18n="link_inversiones">Ver inversiones ›</span>
           </div>
           <div class="total-card yields">
             <span class="label" data-i18n="home_rend">Rend. neto</span>
             <span class="value" id="total-rendimientos">$0</span>
           </div>
-          <div class="total-card grand">
+          <div class="total-card grand total-card-link" id="card-ir-aportes" role="button" tabindex="0">
             <span class="label" data-i18n="home_patrimonio">Patrimonio</span>
             <span class="value" id="total-general">$0</span>
-            <button type="button" class="card-link" id="btn-ir-aportes" data-i18n="link_aportes">Aportes de capital ›</button>
+            <span class="card-link" id="btn-ir-aportes" data-i18n="link_aportes">Aportes de capital ›</span>
           </div>
         </div>
         <p id="sim-warning" class="sim-warning hidden"></p>
 
-        <div class="meta-card" id="meta-card-home">
+        <div class="meta-card meta-card-link" id="meta-card-home" role="button" tabindex="0">
           <div class="meta-head">
             <label class="pat-label" data-i18n="label_metas">Metas</label>
-            <button type="button" class="link-btn" id="btn-ir-metas" data-i18n="link_metas">Ver todas ›</button>
+            <span class="link-btn" id="btn-ir-metas" data-i18n="link_metas">Ver todas ›</span>
           </div>
           <div id="meta-resumen" class="meta-resumen"></div>
         </div>
       </header>
 
-      <main class="main">
-        <div class="home-nav-grid">
-          <button type="button" class="home-nav-btn" id="btn-nav-aportes">
-            <span class="hn-title" data-i18n="nav_aportes">Aportes</span>
-            <span class="hn-sub" data-i18n="nav_aportes_sub">Capital que entra</span>
-          </button>
-          <button type="button" class="home-nav-btn" id="btn-nav-inversiones">
-            <span class="hn-title" data-i18n="nav_inv">Inversiones</span>
-            <span class="hn-sub" data-i18n="nav_inv_sub">Plazos y rentabilidades</span>
-          </button>
-          <button type="button" class="home-nav-btn" id="btn-nav-metas">
-            <span class="hn-title" data-i18n="nav_metas">Metas</span>
-            <span class="hn-sub" data-i18n="nav_metas_sub">Objetivos</span>
-          </button>
-          <button type="button" class="home-nav-btn" id="btn-movimientos">
+      <main class="main home-mov-wrap">
+        <button type="button" class="mov-home-btn" id="btn-movimientos">
+          <div class="mov-home-left">
             <span class="hn-title" data-i18n="nav_mov">Movimientos</span>
             <span class="hn-sub" data-i18n="nav_mov_sub">Línea de tiempo</span>
-          </button>
-        </div>
+          </div>
+          <span class="item-chevron" aria-hidden="true">›</span>
+        </button>
       </main>
     </section>
 
@@ -491,8 +492,50 @@
       </div>
     </section>
 
+    <!-- INGRESO / GASTO DIARIO -->
+    <section id="view-transaccion" class="view hidden">
+      <header class="view-nav">
+        <button type="button" class="btn-back" id="btn-volver-tx">←</button>
+        <h2 id="tx-titulo">Nuevo movimiento</h2>
+        <button type="button" class="btn-nav-danger hidden" id="btn-eliminar-tx">✕</button>
+      </header>
+      <div class="wizard">
+        <div class="detalle-status">
+          <span class="pill" id="tx-status-pill">Ingreso</span>
+          <span class="detalle-status-val" id="tx-status-monto">$0</span>
+        </div>
+        <div class="plazo-mode" id="tx-tipo-switch">
+          <button type="button" data-tx-tipo="ingreso" class="active" data-i18n="tx_type_income">Ingreso (+)</button>
+          <button type="button" data-tx-tipo="gasto" data-i18n="tx_type_expense">Gasto (−)</button>
+        </div>
+        <div class="field full">
+          <label data-i18n="tx_desc_label">Descripción / nombre</label>
+          <input type="text" id="tx-descripcion" maxlength="60" placeholder="Ej. Compra en la tienda, pago de servicios…" data-i18n-placeholder="tx_desc_ph" />
+        </div>
+        <div class="field-group">
+          <div class="field">
+            <label data-i18n="tx_amount_label">Monto (COP)</label>
+            <input type="number" inputmode="decimal" min="0" step="any" id="tx-monto" placeholder="0" />
+          </div>
+          <div class="field">
+            <label data-i18n="tx_date_label">Fecha</label>
+            <input type="date" id="tx-fecha" />
+          </div>
+        </div>
+        <div class="result-box" id="tx-disp-box"></div>
+        <p class="form-error hidden" id="tx-error"></p>
+        <button type="button" class="btn-primary" id="btn-guardar-tx" data-i18n="tx_save">Guardar movimiento</button>
+      </div>
+    </section>
+
     <footer class="footer" id="footer-home">
-      <p>Monsallve Financiero · simulación en este dispositivo</p>
+      <div class="footer-lang">
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button type="button" class="lang-btn" data-lang="es">ES</button>
+          <button type="button" class="lang-btn" data-lang="en">EN</button>
+        </div>
+      </div>
+      <p data-i18n="footer_tagline">Monsallve Financiero · simulación financiera</p>
     </footer>
   </div>
 

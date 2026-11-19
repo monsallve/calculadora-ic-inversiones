@@ -16,6 +16,9 @@ let deleteTarget = null;
 let detalleId = null;
 let aporteEditId = null;
 let metaEditId = null;
+let txEditId = null;
+let txDraftTipo = 'ingreso';
+let rend30Mode = null; // 'prev' | 'next' | null
 let nuevoDraft = null;
 
 /* Firebase */
@@ -98,6 +101,7 @@ function nuevoEscenario(nombre) {
     nombre: nombre || `Escenario ${String.fromCharCode(65 + estado.escenarios.length)}`,
     fechaSim: hoyISO(),
     aportes: [{ id: uid(), fecha: hoyISO(), monto: 5e7, nota: 'Capital inicial' }],
+    transacciones: [],
     bolsillos: [],
     metas: [],
     // Caja / Disponible (estilo Cajitas NU)
@@ -202,10 +206,12 @@ function simularCaja(fechaInclusive, excludeId = null) {
 
   const cfg = cajaCfg(e);
   const aportes = (e.aportes || []).filter((a) => a.fecha);
+  const transacciones = (e.transacciones || []).filter((tx) => tx.fecha && !(excludeId && tx.id === excludeId));
   const bolsillos = (e.bolsillos || []).filter((b) => b.fechaInicio && !(excludeId && b.id === excludeId));
 
   let minF = fechaInclusive;
   aportes.forEach((a) => { if (a.fecha < minF) minF = a.fecha; });
+  transacciones.forEach((tx) => { if (tx.fecha < minF) minF = tx.fecha; });
   bolsillos.forEach((b) => {
     if (b.fechaInicio && b.fechaInicio < minF) minF = b.fechaInicio;
     if (b.fechaFin && b.fechaFin < minF) minF = b.fechaFin;
@@ -214,13 +220,21 @@ function simularCaja(fechaInclusive, excludeId = null) {
   // Mapas por fecha
   const porFecha = {};
   const ensure = (f) => {
-    if (!porFecha[f]) porFecha[f] = { aportes: [], inicios: [], fines: [] };
+    if (!porFecha[f]) porFecha[f] = { aportes: [], ingresos: [], gastos: [], inicios: [], fines: [] };
   };
 
   aportes.forEach((a) => {
     if (a.fecha > fechaInclusive) return;
     ensure(a.fecha);
     porFecha[a.fecha].aportes.push(a);
+  });
+  transacciones.forEach((tx) => {
+    if (tx.fecha > fechaInclusive) return;
+    const m = num(tx.monto);
+    if (m <= 0) return;
+    ensure(tx.fecha);
+    if (tx.tipo === 'gasto') porFecha[tx.fecha].gastos.push(tx);
+    else porFecha[tx.fecha].ingresos.push(tx);
   });
   bolsillos.forEach((b) => {
     const cap = num(b.capital);
@@ -271,10 +285,20 @@ function simularCaja(fechaInclusive, excludeId = null) {
         balance += m;
         movs.push({ tipo: 'aporte', monto: m, nombre: a.nota || 'Aporte' });
       });
+      day.ingresos.forEach((tx) => {
+        const m = num(tx.monto);
+        balance += m;
+        movs.push({ tipo: 'ingreso', id: tx.id, monto: m, nombre: tx.descripcion || 'Ingreso' });
+      });
       day.fines.forEach((b) => {
         const fin = snapshotCDT(b, b.fechaFin);
         balance += fin.totalFinal;
         movs.push({ tipo: 'liberacion', monto: fin.totalFinal, nombre: (b.nombre || 'Inversión') + ' (vencimiento)', extra: fin.neto });
+      });
+      day.gastos.forEach((tx) => {
+        const m = num(tx.monto);
+        balance -= m;
+        movs.push({ tipo: 'gasto', id: tx.id, monto: m, nombre: tx.descripcion || 'Gasto' });
       });
       day.inicios.forEach((b) => {
         const cap = num(b.capital);
@@ -338,6 +362,28 @@ function rendimientoEn(fecha) {
   return s;
 }
 
+function calcularRendimientoPeriodo(desdeFecha, hastaFecha) {
+  const simD = simularCaja(desdeFecha);
+  const simH = simularCaja(hastaFecha);
+  const cajaNeto = Math.max(0, simH.interesNetoAcum - simD.interesNetoAcum);
+  let invD = 0;
+  let invH = 0;
+  (esc()?.bolsillos || []).forEach((b) => {
+    const sD = snapshotCDT(b, desdeFecha);
+    if (sD.estado === 'activo' || sD.estado === 'vencido') invD += sD.neto;
+    const sH = snapshotCDT(b, hastaFecha);
+    if (sH.estado === 'activo' || sH.estado === 'vencido') invH += sH.neto;
+  });
+  const invNeto = Math.max(0, invH - invD);
+  return {
+    desde: desdeFecha,
+    hasta: hastaFecha,
+    cajaNeto,
+    invNeto,
+    totalNeto: cajaNeto + invNeto,
+  };
+}
+
 function patrimonioEn(fecha) {
   let pat = disponibleEn(fecha);
   (esc()?.bolsillos || []).forEach((b) => {
@@ -352,6 +398,7 @@ function detectarSobregiro() {
   if (!e) return null;
   let maxF = fechaSim();
   (e.aportes || []).forEach((a) => { if (a.fecha && a.fecha > maxF) maxF = a.fecha; });
+  (e.transacciones || []).forEach((tx) => { if (tx.fecha && tx.fecha > maxF) maxF = tx.fecha; });
   (e.bolsillos || []).forEach((b) => {
     if (b.fechaInicio && b.fechaInicio > maxF) maxF = b.fechaInicio;
     if (b.fechaFin && b.fechaFin > maxF) maxF = b.fechaFin;
@@ -413,12 +460,24 @@ function generarMovimientos() {
           fecha: d.fecha, tipo: 'aporte', signo: '+', monto: m.monto,
           nombre: m.nombre, orden: 0, saldo: null,
         });
+      } else if (m.tipo === 'ingreso') {
+        events.push({
+          fecha: d.fecha, tipo: 'ingreso', signo: '+', monto: m.monto,
+          nombre: m.nombre, extra: tr('Ingreso diario', 'Daily income'),
+          txId: m.id, orden: 0, saldo: null,
+        });
       } else if (m.tipo === 'liberacion') {
         events.push({
           fecha: d.fecha, tipo: 'liberacion', signo: '+', monto: m.monto,
           nombre: m.nombre, orden: 0,
           extra: m.extra != null ? `neto ${fmt(m.extra)}` : '',
           saldo: null,
+        });
+      } else if (m.tipo === 'gasto') {
+        events.push({
+          fecha: d.fecha, tipo: 'gasto', signo: '−', monto: m.monto,
+          nombre: m.nombre, extra: tr('Gasto diario', 'Daily expense'),
+          txId: m.id, orden: 1, saldo: null,
         });
       } else if (m.tipo === 'inversion') {
         events.push({
@@ -454,6 +513,7 @@ function normalizarEstado(raw) {
   estado.escenarios.forEach((e) => {
     if (!e.fechaSim) e.fechaSim = hoyISO();
     if (!e.aportes) e.aportes = [];
+    if (!Array.isArray(e.transacciones)) e.transacciones = [];
     if (!e.bolsillos) e.bolsillos = [];
     if (!e.caja) e.caja = { tasa: 4, retencion: 7, umbral: 2881 };
     else {
@@ -474,6 +534,13 @@ function normalizarEstado(raw) {
       delete e.meta;
     }
     e.aportes.forEach((a) => { a.monto = num(a.monto); });
+    e.transacciones.forEach((tx) => {
+      if (!tx.id) tx.id = uid();
+      tx.tipo = tx.tipo === 'gasto' ? 'gasto' : 'ingreso';
+      tx.monto = Math.max(0, num(tx.monto));
+      tx.descripcion = String(tx.descripcion || '').slice(0, 60);
+      if (!tx.fecha) tx.fecha = e.fechaSim || hoyISO();
+    });
     e.metas.forEach((m) => { m.monto = num(m.monto); });
     e.bolsillos.forEach((b) => {
       b.capital = num(b.capital);
@@ -578,7 +645,7 @@ function cargarLocalONuevo() {
 }
 
 /* ---------- navegación (historial Android / botón atrás) ---------- */
-const VISTAS = ['gate', 'verify', 'home', 'nuevo', 'detalle', 'aporte', 'aportes', 'inversiones', 'metas', 'meta', 'movimientos', 'escenarios', 'cuenta'];
+const VISTAS = ['gate', 'verify', 'home', 'nuevo', 'detalle', 'aporte', 'aportes', 'inversiones', 'metas', 'meta', 'transaccion', 'movimientos', 'escenarios', 'cuenta'];
 let vistaActual = 'home';
 let navSilent = false;
 /** Pila propia: garantiza que "atrás" vuelva a la vista anterior y no cierre la app */
@@ -604,6 +671,7 @@ function refrescarVista(nombre) {
   else if (nombre === 'inversiones') renderInversionesLista();
   else if (nombre === 'metas') renderMetasLista();
   else if (nombre === 'cuenta') renderCuenta();
+  else if (nombre === 'transaccion') actualizarInfoTx();
   else if (nombre === 'meta') {
     if (metaEditId) abrirMeta(metaEditId, true);
   } else if (nombre === 'detalle') {
@@ -744,6 +812,52 @@ function actualizarTotales() {
 
   renderMeta();
   renderCaja(sim);
+  renderRendimientos30();
+}
+
+function renderRendimientos30() {
+  const f = fechaSim();
+  const prev = calcularRendimientoPeriodo(addDays(f, -30), f);
+  const next = calcularRendimientoPeriodo(f, addDays(f, 30));
+
+  const prevEl = document.getElementById('rend-prev30-val');
+  const nextEl = document.getElementById('rend-next30-val');
+  if (prevEl) prevEl.textContent = (prev.totalNeto > 0 ? '+' : '') + fmt(prev.totalNeto);
+  if (nextEl) nextEl.textContent = (next.totalNeto > 0 ? '+' : '') + fmt(next.totalNeto);
+
+  const btnPrev = document.getElementById('btn-rend-prev30');
+  const btnNext = document.getElementById('btn-rend-next30');
+  if (btnPrev) {
+    btnPrev.classList.toggle('active', rend30Mode === 'prev');
+    btnPrev.setAttribute('aria-expanded', rend30Mode === 'prev' ? 'true' : 'false');
+  }
+  if (btnNext) {
+    btnNext.classList.toggle('active', rend30Mode === 'next');
+    btnNext.setAttribute('aria-expanded', rend30Mode === 'next' ? 'true' : 'false');
+  }
+
+  const panel = document.getElementById('rend-30d-panel');
+  if (!panel) return;
+  if (!rend30Mode) {
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+    return;
+  }
+
+  const info = rend30Mode === 'prev' ? prev : next;
+  const title = rend30Mode === 'prev'
+    ? tr('Rendimiento últimos 30 días', 'Yield in the past 30 days')
+    : tr('Rendimiento próximos 30 días', 'Projected yield next 30 days');
+  panel.innerHTML = `
+    <div class="rend-30d-head">
+      <span class="rend-30d-title">${escapeHtml(title)}</span>
+      <span class="rend-30d-range">${info.desde} → ${info.hasta}</span>
+    </div>
+    <div class="meta-line"><span>${tr('Total rendimiento neto', 'Total net yield')}</span><strong class="gold">${(info.totalNeto > 0 ? '+' : '') + fmt(info.totalNeto)}</strong></div>
+    <div class="meta-line"><span>${tr('Disponible (caja)', 'Available (cash)')}</span><strong>${fmt(info.cajaNeto)}</strong></div>
+    <div class="meta-line"><span>${tr('Inversiones', 'Investments')}</span><strong>${fmt(info.invNeto)}</strong></div>
+  `;
+  panel.classList.remove('hidden');
 }
 
 function renderCaja(sim) {
@@ -850,7 +964,7 @@ function renderEscenarios() {
       <button type="button" class="esc-select">
         <div class="item-left">
           <span class="item-name">${escapeHtml(e.nombre)}</span>
-          <span class="item-meta">${e.bolsillos.length} inversiones · ${e.aportes.length} aportes${activo ? ' · activo' : ''}</span>
+          <span class="item-meta">${e.bolsillos.length} inversiones · ${e.aportes.length} aportes · ${(e.transacciones || []).length} mov. diarios${activo ? ' · activo' : ''}</span>
         </div>
         <span class="item-chevron">${activo ? '●' : '○'}</span>
       </button>
@@ -895,26 +1009,68 @@ function renderEscenarios() {
 function renderMovimientos() {
   const e = esc();
   document.getElementById('mov-escenario-label').textContent =
-    `Línea de tiempo de «${e?.nombre || ''}». Cada escenario tiene la suya.`;
+    `Línea de tiempo de «${e?.nombre || ''}». Toca un ingreso o gasto para editarlo.`;
   const lista = document.getElementById('lista-movimientos');
   const movs = generarMovimientos();
-  if (!movs.length) {
+  const f = fechaSim();
+  const futuros = (e?.transacciones || [])
+    .filter((tx) => tx.fecha && tx.fecha > f)
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+  if (!movs.length && !futuros.length) {
     lista.innerHTML = '<p class="empty-msg">Sin movimientos todavía.</p>';
     return;
   }
-  lista.innerHTML = movs.map((m) => `
-    <div class="mov-row tipo-${m.tipo}">
-      <div class="mov-left">
-        <span class="mov-fecha">${m.fecha}</span>
-        <span class="mov-nombre">${escapeHtml(m.nombre)}</span>
-        ${m.extra ? `<span class="mov-extra">${m.extra}</span>` : ''}
+
+  let html = movs.map((m) => {
+    const clickable = !!m.txId;
+    const montoClass = m.signo === '+' ? 'plus' : (m.tipo === 'gasto' ? 'minus-gasto' : 'minus');
+    return `
+      <div class="mov-row tipo-${m.tipo}${clickable ? ' mov-clickable' : ''}"${clickable ? ` data-tx-id="${escapeHtml(m.txId)}" role="button" tabindex="0"` : ''}>
+        <div class="mov-left">
+          <span class="mov-fecha">${m.fecha}</span>
+          <span class="mov-nombre">${escapeHtml(m.nombre)}</span>
+          ${m.extra ? `<span class="mov-extra">${escapeHtml(m.extra)}${clickable ? ' · ' + tr('tocar para editar', 'tap to edit') : ''}</span>` : ''}
+        </div>
+        <div class="mov-right">
+          <span class="mov-monto ${montoClass}">${m.signo}${fmt(m.monto)}</span>
+          <span class="mov-saldo">Disp. ${fmt(m.saldo)}</span>
+        </div>
       </div>
-      <div class="mov-right">
-        <span class="mov-monto ${m.signo === '+' ? 'plus' : 'minus'}">${m.signo}${fmt(m.monto)}</span>
-        <span class="mov-saldo">Disp. ${fmt(m.saldo)}</span>
-      </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
+
+  if (futuros.length) {
+    html += `<p class="mov-section-label">${tr('Programados después del', 'Scheduled after')} ${f}</p>`;
+    html += futuros.map((tx) => {
+      const esGasto = tx.tipo === 'gasto';
+      return `
+        <div class="mov-row tipo-${tx.tipo} mov-clickable" data-tx-id="${escapeHtml(tx.id)}" role="button" tabindex="0">
+          <div class="mov-left">
+            <span class="mov-fecha">${tx.fecha}</span>
+            <span class="mov-nombre">${escapeHtml(tx.descripcion || (esGasto ? 'Gasto' : 'Ingreso'))}</span>
+            <span class="mov-extra">${esGasto ? tr('Gasto futuro', 'Future expense') : tr('Ingreso futuro', 'Future income')} · ${tr('tocar para editar', 'tap to edit')}</span>
+          </div>
+          <div class="mov-right">
+            <span class="mov-monto ${esGasto ? 'minus-gasto' : 'plus'}">${esGasto ? '−' : '+'}${fmt(num(tx.monto))}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  lista.innerHTML = html;
+  lista.querySelectorAll('.mov-clickable[data-tx-id]').forEach((row) => {
+    const go = () => {
+      const id = row.getAttribute('data-tx-id');
+      const tx = (esc()?.transacciones || []).find((x) => x.id === id);
+      if (tx) abrirTransaccion(tx.tipo, tx.id);
+    };
+    row.addEventListener('click', go);
+    row.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); }
+    });
+  });
 }
 
 /* ---------- NUEVA INVERSIÓN ---------- */
@@ -1469,6 +1625,143 @@ function guardarAporte() {
   mostrarVista('aportes', { replace: true });
 }
 
+/* ---------- INGRESO / GASTO DIARIO ---------- */
+function syncTxTipoUI() {
+  document.querySelectorAll('#tx-tipo-switch button').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.txTipo === txDraftTipo);
+  });
+  const pill = document.getElementById('tx-status-pill');
+  if (pill) {
+    pill.textContent = txDraftTipo === 'gasto'
+      ? tr('Gasto', 'Expense')
+      : tr('Ingreso', 'Income');
+  }
+  const tit = document.getElementById('tx-titulo');
+  if (tit) {
+    if (txEditId) {
+      tit.textContent = txDraftTipo === 'gasto'
+        ? tr('Editar gasto', 'Edit expense')
+        : tr('Editar ingreso', 'Edit income');
+    } else {
+      tit.textContent = txDraftTipo === 'gasto'
+        ? tr('Nuevo gasto', 'New expense')
+        : tr('Nuevo ingreso', 'New income');
+    }
+  }
+}
+
+function abrirTransaccion(tipo = 'ingreso', id = null) {
+  const e = esc();
+  const tx = id && e ? (e.transacciones || []).find((x) => x.id === id) : null;
+  txEditId = tx ? tx.id : null;
+  txDraftTipo = tx ? tx.tipo : (tipo === 'gasto' ? 'gasto' : 'ingreso');
+
+  const descEl = document.getElementById('tx-descripcion');
+  const montoEl = document.getElementById('tx-monto');
+  const fechaEl = document.getElementById('tx-fecha');
+  const delBtn = document.getElementById('btn-eliminar-tx');
+
+  if (descEl) descEl.value = tx ? (tx.descripcion || '') : '';
+  if (montoEl) montoEl.value = tx ? tx.monto : '';
+  if (fechaEl) fechaEl.value = tx ? tx.fecha : fechaSim();
+  if (delBtn) delBtn.classList.toggle('hidden', !tx);
+
+  showFormError('tx-error', '');
+  syncTxTipoUI();
+  actualizarInfoTx();
+  mostrarVista('transaccion');
+  if (descEl && !tx) {
+    setTimeout(() => { try { descEl.focus(); } catch (_e) {} }, 60);
+  }
+}
+
+function actualizarInfoTx() {
+  const montoEl = document.getElementById('tx-monto');
+  const fechaEl = document.getElementById('tx-fecha');
+  const statusMonto = document.getElementById('tx-status-monto');
+  const box = document.getElementById('tx-disp-box');
+  const saveBtn = document.getElementById('btn-guardar-tx');
+  if (!montoEl || !fechaEl || !box) return;
+
+  const fecha = fechaEl.value || fechaSim();
+  const monto = Math.max(0, num(montoEl.value));
+  const disp = disponibleEn(fecha, txEditId);
+  const despues = txDraftTipo === 'gasto' ? disp - monto : disp + monto;
+
+  if (statusMonto) {
+    statusMonto.textContent = (txDraftTipo === 'gasto' ? '−' : '+') + fmt(monto);
+  }
+  box.innerHTML = `
+    <div class="result-item"><span class="r-label">${tr('Disponible en esa fecha', 'Available on date')}</span>
+      <span class="r-value">${fmt(disp)}</span></div>
+    <div class="result-item"><span class="r-label">${tr('Disponible después', 'Available after')}</span>
+      <span class="r-value">${fmt(despues)}</span></div>
+  `;
+
+  if (txDraftTipo === 'gasto' && monto > disp + 0.005) {
+    showFormError('tx-error', tr(
+      `No te alcanza el Disponible (${fmt(disp)}) en esa fecha para un gasto de ${fmt(monto)}.`,
+      `Insufficient Available balance (${fmt(disp)}) on that date for a ${fmt(monto)} expense.`
+    ));
+    if (saveBtn) saveBtn.disabled = true;
+  } else {
+    showFormError('tx-error', '');
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+function guardarTransaccion() {
+  const e = esc();
+  if (!e) return;
+  const descEl = document.getElementById('tx-descripcion');
+  const montoEl = document.getElementById('tx-monto');
+  const fechaEl = document.getElementById('tx-fecha');
+
+  const fecha = (fechaEl && fechaEl.value) || fechaSim();
+  const monto = num(montoEl ? montoEl.value : 0);
+  const descripcion = (descEl ? descEl.value.trim() : '')
+    || (txDraftTipo === 'gasto' ? tr('Gasto', 'Expense') : tr('Ingreso', 'Income'));
+
+  if (!(monto > 0)) {
+    showFormError('tx-error', tr('Escribe un monto mayor a 0.', 'Enter an amount greater than 0.'));
+    return;
+  }
+
+  if (txDraftTipo === 'gasto') {
+    const disp = disponibleEn(fecha, txEditId);
+    if (monto > disp + 0.005) {
+      showFormError('tx-error', tr(
+        `No te alcanza el Disponible (${fmt(disp)}) en esa fecha para registrar este gasto de ${fmt(monto)}.`,
+        `Insufficient Available balance (${fmt(disp)}) on that date to record this ${fmt(monto)} expense.`
+      ));
+      return;
+    }
+  }
+
+  if (!Array.isArray(e.transacciones)) e.transacciones = [];
+  if (txEditId) {
+    const tx = e.transacciones.find((x) => x.id === txEditId);
+    if (tx) {
+      tx.tipo = txDraftTipo;
+      tx.fecha = fecha;
+      tx.monto = monto;
+      tx.descripcion = descripcion;
+    }
+  } else {
+    e.transacciones.push({
+      id: uid(),
+      tipo: txDraftTipo,
+      fecha,
+      monto,
+      descripcion,
+    });
+  }
+
+  txEditId = null;
+  guardar();
+  volverAtras();
+}
+
 /* ---------- eliminar ---------- */
 function pedirEliminar(type, id, nombre) {
   deleteTarget = { type, id };
@@ -1490,6 +1783,10 @@ function eliminarConfirmado() {
     if (!e) return;
     e.metas = (e.metas || []).filter((m) => m.id !== deleteTarget.id);
     metaEditId = null;
+  } else if (tipo === 'transaccion') {
+    if (!e) return;
+    e.transacciones = (e.transacciones || []).filter((tx) => tx.id !== deleteTarget.id);
+    txEditId = null;
   } else if (tipo === 'escenario') {
     estado.escenarios = estado.escenarios.filter((e) => e.id !== deleteTarget.id);
     if (!estado.escenarios.find((e) => e.id === estado.activoId)) {
@@ -1511,6 +1808,9 @@ function eliminarConfirmado() {
   } else if (tipo === 'cdt') {
     renderInversionesLista();
     mostrarVista('inversiones', { replace: true });
+  } else if (tipo === 'transaccion') {
+    renderMovimientos();
+    mostrarVista('movimientos', { replace: true });
   } else {
     mostrarVista('home');
     renderHome();
@@ -1564,15 +1864,19 @@ function actualizarAuthChip() {
   const chip = document.getElementById('auth-chip-text');
   if (!chip) return;
   if (usuario && perfilUsuario) {
-    const st = syncStatus === 'syncing' ? tr(' · guardando…', ' · saving…')
-      : syncStatus === 'synced' ? tr(' · nube', ' · cloud')
-      : syncStatus === 'error' ? tr(' · error sync', ' · sync error')
+    const uname = '@' + (perfilUsuario.username || 'usuario');
+    const st = syncStatus === 'syncing' ? tr('Guardando en la nube…', 'Saving to the cloud…')
+      : syncStatus === 'synced' ? tr('Sincronizado en la nube', 'Synced to the cloud')
+      : syncStatus === 'error' ? tr('Error de sincronización', 'Sync error')
       : '';
-    chip.textContent = '@' + (perfilUsuario.username || 'usuario') + st;
+    chip.textContent = uname;
+    chip.title = st ? `${uname} · ${st}` : uname;
   } else if (usuario) {
     chip.textContent = usuario.email || 'Cuenta';
+    chip.title = chip.textContent;
   } else {
     chip.textContent = typeof t === 'function' ? t('chip_no_session') : 'Sin sesión';
+    chip.title = '';
   }
 }
 
@@ -2426,11 +2730,27 @@ async function init() {
   document.querySelectorAll('.lang-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       if (typeof setLang === 'function') setLang(btn.getAttribute('data-lang'));
+      actualizarAuthChip();
+      if (usuario && !necesitaVerificarEmail(usuario)) {
+        refrescarVista(vistaActual);
+      }
     });
   });
 
+  const bindCardAction = (id, fn) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('click', fn);
+    el.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        fn();
+      }
+    });
+  };
+
   document.getElementById('btn-nuevo-cdt').addEventListener('click', () => abrirNuevoCDT());
-  document.getElementById('btn-ir-aportes').addEventListener('click', () => {
+  bindCardAction('card-ir-aportes', () => {
     renderAportesLista();
     mostrarVista('aportes');
   });
@@ -2550,7 +2870,7 @@ async function init() {
   }
 
   // Metas (lista + detalle)
-  document.getElementById('btn-ir-metas').addEventListener('click', () => {
+  bindCardAction('meta-card-home', () => {
     renderMetasLista();
     mostrarVista('metas');
   });
@@ -2592,12 +2912,42 @@ async function init() {
     el.addEventListener('change', syncMetaEnVivo);
   });
 
-  // Inversiones lista
-  document.getElementById('btn-ir-inversiones').addEventListener('click', () => {
+  // Inversiones lista (recuadro completo)
+  bindCardAction('card-ir-inversiones', () => {
     renderInversionesLista();
     mostrarVista('inversiones');
   });
   document.getElementById('btn-volver-inversiones').addEventListener('click', volverAtras);
+
+  // Ingresos / Gastos diarios y rendimientos a 30 días
+  on('btn-add-ingreso', 'click', () => abrirTransaccion('ingreso', null));
+  on('btn-add-gasto', 'click', () => abrirTransaccion('gasto', null));
+  on('btn-rend-prev30', 'click', () => {
+    rend30Mode = rend30Mode === 'prev' ? null : 'prev';
+    renderRendimientos30();
+  });
+  on('btn-rend-next30', 'click', () => {
+    rend30Mode = rend30Mode === 'next' ? null : 'next';
+    renderRendimientos30();
+  });
+
+  on('btn-volver-tx', 'click', volverAtras);
+  on('btn-guardar-tx', 'click', guardarTransaccion);
+  on('btn-eliminar-tx', 'click', () => {
+    const tx = (esc()?.transacciones || []).find((x) => x.id === txEditId);
+    if (tx) pedirEliminar('transaccion', tx.id, tx.descripcion || (tx.tipo === 'gasto' ? 'Gasto' : 'Ingreso'));
+  });
+  document.querySelectorAll('#tx-tipo-switch button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      txDraftTipo = btn.dataset.txTipo === 'gasto' ? 'gasto' : 'ingreso';
+      syncTxTipoUI();
+      actualizarInfoTx();
+    });
+  });
+  ['tx-descripcion', 'tx-monto', 'tx-fecha'].forEach((id) => {
+    on(id, 'input', actualizarInfoTx);
+    on(id, 'change', actualizarInfoTx);
+  });
 
   document.getElementById('btn-toggle-caja').addEventListener('click', () => {
     const form = document.getElementById('caja-form');
@@ -2631,11 +2981,6 @@ async function init() {
     document.getElementById('caja-form').classList.add('hidden');
     renderHome();
   });
-
-  // Atajos de navegación del inicio
-  on('btn-nav-aportes', 'click', () => { renderAportesLista(); mostrarVista('aportes'); });
-  on('btn-nav-inversiones', 'click', () => { renderInversionesLista(); mostrarVista('inversiones'); });
-  on('btn-nav-metas', 'click', () => { renderMetasLista(); mostrarVista('metas'); });
 
   // Cuenta / Auth
   on('btn-cuenta', 'click', () => {
