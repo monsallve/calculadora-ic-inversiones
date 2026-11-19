@@ -884,25 +884,23 @@ function renderMeta() {
   if (!box) return;
   const metas = e?.metas || [];
   if (!metas.length) {
-    box.innerHTML = '<span class="meta-empty">Sin metas. Entra a Metas para crear la primera.</span>';
+    box.innerHTML = `<span class="meta-empty">${tr('Sin metas aún', 'No goals yet')}</span>`;
     return;
   }
-  // Mostrar hasta 3 metas resumidas
-  const f = fechaSim();
-  const lines = metas.slice(0, 3).map((m) => {
+  const lines = metas.slice(0, 2).map((m) => {
     if (!m.fecha) {
       return `<div class="meta-line"><span>${escapeHtml(m.nombre || 'Meta')}</span><strong>—</strong></div>`;
     }
     const pat = patrimonioEn(m.fecha);
     const obj = num(m.monto);
-    let tag = '';
+    let right = fmtShort(pat);
     if (obj > 0) {
       const gap = pat - obj;
-      tag = gap >= 0 ? ' · ok' : ' · falta ' + fmtShort(-gap);
+      right = gap >= 0 ? 'ok' : '−' + fmtShort(-gap);
     }
-    return `<div class="meta-line"><span>${escapeHtml(m.nombre || 'Meta')} (${m.fecha})</span><strong class="gold">${fmtShort(pat)}${tag}</strong></div>`;
+    return `<div class="meta-line"><span>${escapeHtml(m.nombre || 'Meta')}</span><strong class="gold">${right}</strong></div>`;
   }).join('');
-  const more = metas.length > 3 ? `<span class="meta-empty">${metas.length - 3} más…</span>` : '';
+  const more = metas.length > 2 ? `<span class="meta-empty">+${metas.length - 2} ${tr('más', 'more')}</span>` : '';
   box.innerHTML = lines + more;
 }
 

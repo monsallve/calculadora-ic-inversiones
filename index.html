@@ -28,7 +28,7 @@
 
     <!-- HOME -->
     <section id="view-home" class="view hidden">
-      <header class="header">
+      <header class="header home-stack">
         <div class="header-top">
           <div class="brand">
             <span class="brand-mark">◆</span>
@@ -52,16 +52,6 @@
             <label class="pat-label" data-i18n="label_sim_date">Fecha de simulación</label>
             <input type="date" id="input-fecha-sim" />
           </div>
-          <div class="sim-quick-actions">
-            <button type="button" class="quick-tx-btn ingreso" id="btn-add-ingreso">
-              <span class="qtx-sign">+</span>
-              <span data-i18n="btn_add_income">Ingreso</span>
-            </button>
-            <button type="button" class="quick-tx-btn gasto" id="btn-add-gasto">
-              <span class="qtx-sign">−</span>
-              <span data-i18n="btn_add_expense">Gasto</span>
-            </button>
-          </div>
           <div class="sim-yields-30d">
             <button type="button" class="yield-30d-btn" id="btn-rend-prev30" aria-expanded="false">
               <span class="y30-label" data-i18n="btn_rend_prev30">30 días antes</span>
@@ -73,6 +63,22 @@
             </button>
           </div>
           <div id="rend-30d-panel" class="rend-30d-panel hidden"></div>
+        </div>
+
+        <div class="consulta-card tx-bar-card">
+          <div class="tx-bar-head">
+            <label class="pat-label" data-i18n="label_daily_tx">Ingresos y gastos diarios</label>
+          </div>
+          <div class="sim-quick-actions">
+            <button type="button" class="quick-tx-btn ingreso" id="btn-add-ingreso">
+              <span class="qtx-sign">+</span>
+              <span data-i18n="btn_add_income">Ingreso</span>
+            </button>
+            <button type="button" class="quick-tx-btn gasto" id="btn-add-gasto">
+              <span class="qtx-sign">−</span>
+              <span data-i18n="btn_add_expense">Gasto</span>
+            </button>
+          </div>
         </div>
 
         <div class="consulta-card caja-card">
@@ -115,6 +121,13 @@
             <span class="label" data-i18n="home_rend">Rend. neto</span>
             <span class="value" id="total-rendimientos">$0</span>
           </div>
+          <div class="total-card meta-card meta-card-link" id="meta-card-home" role="button" tabindex="0">
+            <div class="meta-head">
+              <span class="label" data-i18n="label_metas">Metas</span>
+              <span class="link-btn" id="btn-ir-metas" data-i18n="link_metas">Ver todas ›</span>
+            </div>
+            <div id="meta-resumen" class="meta-resumen"></div>
+          </div>
           <div class="total-card grand total-card-link" id="card-ir-aportes" role="button" tabindex="0">
             <span class="label" data-i18n="home_patrimonio">Patrimonio</span>
             <span class="value" id="total-general">$0</span>
@@ -122,14 +135,6 @@
           </div>
         </div>
         <p id="sim-warning" class="sim-warning hidden"></p>
-
-        <div class="meta-card meta-card-link" id="meta-card-home" role="button" tabindex="0">
-          <div class="meta-head">
-            <label class="pat-label" data-i18n="label_metas">Metas</label>
-            <span class="link-btn" id="btn-ir-metas" data-i18n="link_metas">Ver todas ›</span>
-          </div>
-          <div id="meta-resumen" class="meta-resumen"></div>
-        </div>
       </header>
 
       <main class="main home-mov-wrap">

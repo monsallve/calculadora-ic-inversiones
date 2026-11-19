@@ -1,5 +1,5 @@
-/* Monsallve Financiero SW v11 — red primero, así los arreglos llegan a la PWA */
-const CACHE_NAME = 'monsallve-v11';
+/* Monsallve Financiero SW v12 — red primero, así los arreglos llegan a la PWA */
+const CACHE_NAME = 'monsallve-v12';
 
 const ASSETS = [
   './',

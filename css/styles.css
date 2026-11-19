@@ -49,12 +49,25 @@ body {
 
 .header { margin-bottom: 10px; }
 
+#view-home {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.home-stack {
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .header-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 4px;
 }
 
 .header-top-right {
@@ -843,11 +856,19 @@ body {
 }
 
 .sim-card {
-  margin-bottom: 14px;
+  margin-bottom: 0;
+}
+
+#view-home .consulta-card,
+#view-home .sim-warning,
+#view-home .meta-card,
+#view-home .home-mov-wrap {
+  margin-top: 0;
+  margin-bottom: 0;
 }
 
 .sim-warning {
-  margin-top: 10px;
+  margin-top: 0;
   padding: 10px 14px;
   border-radius: 10px;
   border: 1px solid var(--gold-dim);
@@ -1318,6 +1339,9 @@ body {
 .caja-card { margin-top: 12px; }
 .mov-row.tipo-rendimiento { border-left: 2px solid var(--gold); }
 
+.total-card {
+  min-width: 0;
+}
 .total-card.grand {
   position: relative;
   padding-bottom: 16px;
@@ -1338,6 +1362,44 @@ body {
   text-transform: uppercase;
   text-align: left;
   font-family: var(--font-body);
+}
+
+.totals .meta-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 14px 16px;
+  min-width: 0;
+}
+.totals .meta-card .meta-head {
+  margin-bottom: 6px;
+  gap: 6px;
+}
+.totals .meta-card .meta-head .label {
+  margin-bottom: 0;
+}
+.totals .meta-card .link-btn {
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+.totals .meta-card .meta-line {
+  font-size: 0.76rem;
+  padding: 2px 0;
+  gap: 6px;
+}
+.totals .meta-card .meta-line > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.totals .meta-card .meta-line > strong {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.totals .meta-card .meta-empty {
+  font-size: 0.75rem;
+  line-height: 1.35;
 }
 
 .total-card-link,
@@ -1375,6 +1437,17 @@ body {
   color: var(--gold);
   font-family: var(--font-body);
   font-weight: 500;
+}
+
+/* Independent daily income / expense bar */
+.tx-bar-card {
+  padding: 13px 16px;
+}
+.tx-bar-head .pat-label {
+  margin-bottom: 8px;
+}
+.tx-bar-card .sim-quick-actions {
+  margin-top: 0;
 }
 
 /* Sim card quick actions (Ingreso / Gasto) + 30d yields */
